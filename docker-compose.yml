@@ -1,0 +1,51 @@
+services:
+  # 1. Database Service (MongoDB)
+  mongodb:
+    image: mongo:latest
+    container_name: wavehouse_mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "quit(db.adminCommand('ping').ok ? 0 : 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - wavehouse_network
+
+  # 2. Node.js Backend API Service
+  backend:
+    build: ./backend
+    container_name: wavehouse_backend
+    ports:
+      - "5000:5000"
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/wavehouse_db
+      - PORT=5000
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - wavehouse_network
+
+  # 3. Python AI Service
+  ai_service:
+    build: ./ai-service
+    container_name: wavehouse_ai_service
+    ports:
+      - "8000:8000"
+    networks:
+      - wavehouse_network
+
+  web:
+    build: ./web
+    ports:
+      - "3000:80"
+    networks:
+      - wavehouse_network
+
+networks:
+  wavehouse_network:
+    driver: bridge
