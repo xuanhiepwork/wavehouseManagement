@@ -1,17 +1,22 @@
-# 4. Setup AI Service (Python + FastAPI + Uvicorn)
+# WaveHouse AI Service
 
-# Di chuyển vào thư mục ai-service và tạo môi trường ảo Python
-cd ai-service
-python -m venv venv
+Requires Python 3.10 or later. From this directory:
 
-# Kích hoạt môi trường ảo (Windows)
-.\venv\Scripts\activate
-# (Nếu dùng macOS/Linux thì lệnh là: source venv/bin/activate)
+```sh
+python -m venv .venv
+```
 
-# Cài đặt các thư viện cốt lõi cho AI & API
-pip install fastapi uvicorn google-generativeai langchain chromadb pydantic requests
+Activate `.venv` (`.venv\Scripts\Activate.ps1` on PowerShell, or
+`source .venv/bin/activate` on macOS/Linux), then:
 
-# Xuất danh sách thư viện ra file requirements.txt
-pip freeze > requirements.txt
-deactivate
-cd ..
+```sh
+python -m pip install -r requirements.txt
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+`GET /` returns service information, `/health` returns service health, and
+`/docs` serves interactive API documentation. The container runs this FastAPI
+application with Uvicorn, following the [FastAPI container guidance](https://fastapi.tiangolo.com/deployment/docker/).
+
+Gemini/RAG, forecasts, routing and database integration are not implemented yet;
+no API key is required for these status endpoints.

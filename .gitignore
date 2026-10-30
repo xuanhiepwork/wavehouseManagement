@@ -1,0 +1,58 @@
+# ====================================================================
+# DEPENDENCIES (Thư mục cài đặt thư viện - Cực kỳ nặng, không push lên Git)
+# ====================================================================
+node_modules/
+.pnp
+.pnp.js
+jspm_packages/
+web_modules/
+
+# Python dependencies (Dành cho ai-service)
+venv/
+.venv/
+env/
+.env_python/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# ====================================================================
+# ENVIRONMENT VARIABLES (File chứa thông tin mật, token, key AI - Cấm push)
+# ====================================================================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# ====================================================================
+# LOCAL DATA & DOCKER (Dữ liệu database cục bộ)
+# ====================================================================
+mongodb_data/
+.docker/
+
+# ====================================================================
+# BUILD & OUTPUTS (Thư mục code sau khi biên dịch)
+# ====================================================================
+dist/
+build/
+.expo/
+*.apk
+*.aab
+*.ipa
+
+# ====================================================================
+# IDEs & SYSTEM RÁC (File cấu hình cá nhân của máy tính/editor)
+# ====================================================================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
