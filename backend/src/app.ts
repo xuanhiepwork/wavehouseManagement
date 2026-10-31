@@ -9,15 +9,18 @@ import { errorHandler } from './middleware/errorHandler';
 import { ingredientPaths, ingredientSchemas } from './config/ingredient.openapi';
 import { productRouter } from './routes/product.routes';
 import { productPaths, productSchemas } from './config/product.openapi';
+import { recipeRouter } from './routes/recipe.routes';
+import { recipePaths, recipeSchemas } from './config/recipe.openapi';
 
 // Explicit paths keep documentation working after TypeScript sources are compiled.
 const apiDocs = {
     openapi: '3.0.0',
     info: { title: 'WaveHouse Management API Docs', version: '1.0.0' },
-    components: { schemas: { ...ingredientSchemas, ...productSchemas } },
+    components: { schemas: { ...ingredientSchemas, ...productSchemas, ...recipeSchemas } },
     paths: {
         ...ingredientPaths,
         ...productPaths,
+        ...recipePaths,
         '/': { get: { summary: 'Server status', responses: { '200': { description: 'Server is running' } } } },
         '/health': { get: { summary: 'Database readiness', responses: {
             '200': { description: 'Database is connected' },
@@ -45,6 +48,7 @@ export function createApp(isDatabaseReady = () => mongoose.connection.readyState
     });
     app.use('/api/ingredients', ingredientRouter);
     app.use('/api/products', productRouter);
+    app.use('/api/recipes', recipeRouter);
     io.on('connection', socket => {
         // Notification relay only; inventory persistence is not implemented yet.
         socket.on('update_inventory', (data: unknown) => { io.emit('inventory_changed', data); });

@@ -86,6 +86,8 @@ npm start
   4. git push origin HEAD hoặc git push origin test(tên nhánh)           
   * Đẩy code lên nhánh hiện tại
 
+
+## FIX CODEX ERROR
 `
   code --install-extension openai.chatgpt@26.1007.21434 --force
 `
