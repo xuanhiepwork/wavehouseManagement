@@ -1,0 +1,26 @@
+name: wavehouse-postgres
+
+services:
+  postgres:
+    image: postgres:17-bookworm
+    ports:
+      - "127.0.0.1:5433:5432"
+    environment:
+      POSTGRES_USER: wavehouse_admin
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD in .env.postgres}
+      POSTGRES_DEV_PASSWORD: ${POSTGRES_DEV_PASSWORD:?Set POSTGRES_DEV_PASSWORD in .env.postgres}
+      POSTGRES_TEST_PASSWORD: ${POSTGRES_TEST_PASSWORD:?Set POSTGRES_TEST_PASSWORD in .env.postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init/01-local-databases.sh:/docker-entrypoint-initdb.d/01-local-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wavehouse_admin -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  postgres_data:
+    name: wavehouse_postgres_data

@@ -25,3 +25,10 @@ use an ephemeral HTTP port and do not require MongoDB.
 
 From the repository root, `docker compose up --build` starts all services.
 Warehouse CRUD and authentication are not implemented yet.
+
+## Local PostgreSQL foundation (Phase 1)
+
+The separate [PostgreSQL setup guide](docs/postgresql-local.md) covers the
+local catalog schema, Prisma 7 migrations, isolated integration tests, and
+VS Code Database Client connections. The running API still uses MongoDB.
+No Prisma runtime client or module-format conversion is introduced here.
