@@ -85,3 +85,30 @@ test('readiness supports asynchronous PostgreSQL probes and sanitizes probe fail
         assert.deepEqual(await response.json(), { status: 'unavailable' });
     } finally { await new Promise(resolve => io.close(resolve)); }
 });
+
+test('all four catalog selections compose independent routes and documentation', async () => {
+    const before = { NODE_ENV: process.env.NODE_ENV, CATALOG_INGREDIENT_STORE: process.env.CATALOG_INGREDIENT_STORE, CATALOG_PRODUCT_STORE: process.env.CATALOG_PRODUCT_STORE };
+    try {
+        for (const ingredient of ['mongodb', 'postgres']) for (const product of ['mongodb', 'postgres']) {
+            Object.assign(process.env, { NODE_ENV: 'test', CATALOG_INGREDIENT_STORE: ingredient, CATALOG_PRODUCT_STORE: product });
+            const options = {
+                ...(ingredient === 'postgres' ? { postgresIngredients: { getIngredient: async () => ({ marker: 'ingredient' }) } } : {}),
+                ...(product === 'postgres' ? { postgresProducts: { getProduct: async () => ({ marker: 'product' }) } } : {}),
+            };
+            const { server, io } = createApp(() => true, options);
+            await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+            const base = `http://127.0.0.1:${server.address().port}`;
+            try {
+                const docs = await (await fetch(base + '/api-docs.json')).json();
+                for (const [name, mode, path] of [['Ingredient', ingredient, 'ingredients'], ['Product', product, 'products']]) {
+                    assert.equal(docs.components.schemas[name].properties.__v?.type, mode === 'postgres' ? undefined : 'integer');
+                    const res = await fetch(base + '/api/' + path + '/11111111-1111-4111-8111-111111111111');
+                    assert.equal(res.status, mode === 'postgres' ? 200 : 400);
+                }
+                assert.equal(docs.components.schemas.Recipe.properties.productId.pattern, '^[a-fA-F0-9]{24}$');
+            } finally { await new Promise(resolve => io.close(resolve)); }
+        }
+        process.env.CATALOG_PRODUCT_STORE = 'postgres';
+        assert.throws(() => createApp(() => true), /selection is incomplete/);
+    } finally { for (const [key, value] of Object.entries(before)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } }
+});

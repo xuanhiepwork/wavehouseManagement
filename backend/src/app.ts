@@ -7,10 +7,11 @@ import swaggerUi from 'swagger-ui-express';
 import { ingredientRouter, postgresIngredientRouter } from './routes/ingredient.routes';
 import { errorHandler } from './middleware/errorHandler';
 import { ingredientPaths, ingredientSchemas, postgresIngredientDocumentation } from './config/ingredient.openapi';
-import { ingredientStore } from './config/postgres';
+import { ingredientStore, productStore } from './config/postgres';
 import type { createPostgresIngredientService } from './services/ingredient.postgres.service';
-import { productRouter } from './routes/product.routes';
-import { productPaths, productSchemas } from './config/product.openapi';
+import { productRouter, postgresProductRouter } from './routes/product.routes';
+import { productPaths, productSchemas, postgresProductDocumentation } from './config/product.openapi';
+import type { createPostgresProductService } from './services/product.postgres.service';
 import { recipeRouter } from './routes/recipe.routes';
 import { recipePaths, recipeSchemas } from './config/recipe.openapi';
 
@@ -32,13 +33,17 @@ const apiDocs = {
 };
 
 export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = () => mongoose.connection.readyState === 1,
-    options: { postgresIngredients?: ReturnType<typeof createPostgresIngredientService> } = {}) {
+    options: { postgresIngredients?: ReturnType<typeof createPostgresIngredientService>;
+        postgresProducts?: ReturnType<typeof createPostgresProductService> } = {}) {
     const mode = ingredientStore();
+    const products = productStore();
     if ((mode === 'postgres') !== !!options.postgresIngredients) throw new Error('Ingredient implementation selection is incomplete');
-    const docs = mode === 'postgres' ? (() => {
-        const pg = postgresIngredientDocumentation();
-        return { ...apiDocs, components: { schemas: { ...apiDocs.components.schemas, ...pg.schemas } }, paths: { ...apiDocs.paths, ...pg.paths } };
-    })() : apiDocs;
+    if ((products === 'postgres') !== !!options.postgresProducts) throw new Error('Product implementation selection is incomplete');
+    const ingredientDocs = mode === 'postgres' ? postgresIngredientDocumentation() : { schemas: {}, paths: {} };
+    const productDocs = products === 'postgres' ? postgresProductDocumentation() : { schemas: {}, paths: {} };
+    const docs = { ...apiDocs,
+        components: { schemas: { ...apiDocs.components.schemas, ...ingredientDocs.schemas, ...productDocs.schemas } },
+        paths: { ...apiDocs.paths, ...ingredientDocs.paths, ...productDocs.paths } };
     const app = express();
     const server = http.createServer(app);
     const origin = process.env.CORS_ORIGIN?.split(',').map(value => value.trim()).filter(Boolean) ?? '*';
@@ -57,7 +62,7 @@ export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = ()
         res.status(ready ? 200 : 503).json({ status: ready ? 'ok' : 'unavailable' });
     });
     app.use('/api/ingredients', options.postgresIngredients ? postgresIngredientRouter(options.postgresIngredients) : ingredientRouter);
-    app.use('/api/products', productRouter);
+    app.use('/api/products', options.postgresProducts ? postgresProductRouter(options.postgresProducts) : productRouter);
     app.use('/api/recipes', recipeRouter);
     io.on('connection', socket => {
         // Notification relay only; inventory persistence is not implemented yet.

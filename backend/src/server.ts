@@ -1,9 +1,10 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { createApp } from './app';
-import { ingredientStore, loadPostgresEnvironment } from './config/postgres';
+import { ingredientStore, productStore, catalogUsesPostgres, loadPostgresEnvironment } from './config/postgres';
 import { createPrismaRuntime } from './db/prisma';
 import { createPostgresIngredientService } from './services/ingredient.postgres.service';
+import { createPostgresProductService } from './services/product.postgres.service';
 
 dotenv.config();
 
@@ -12,12 +13,15 @@ export async function startServer() {
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
         throw new Error('PORT must be an integer between 1 and 65535');
     }
-    const postgres = ingredientStore() === 'postgres';
+    const postgres = catalogUsesPostgres();
     if (postgres) loadPostgresEnvironment();
     const runtime = postgres ? createPrismaRuntime() : undefined;
     const ready = runtime ? async () => mongoose.connection.readyState === 1 && await runtime.ready() : undefined;
     const { io, server } = runtime
-        ? createApp(ready, { postgresIngredients: createPostgresIngredientService(runtime.client) }) : createApp();
+        ? createApp(ready, {
+            ...(ingredientStore() === 'postgres' ? { postgresIngredients: createPostgresIngredientService(runtime.client) } : {}),
+            ...(productStore() === 'postgres' ? { postgresProducts: createPostgresProductService(runtime.client) } : {}),
+        }) : createApp();
     try {
         if (runtime) await runtime.connect();
         await mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/wavehouse_db', {

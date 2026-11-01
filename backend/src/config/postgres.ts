@@ -10,11 +10,25 @@ export function ingredientStore(env: Environment = process.env): 'mongodb' | 'po
     }
     return mode;
 }
+export function productStore(env: Environment = process.env): 'mongodb' | 'postgres' {
+    const mode = env.CATALOG_PRODUCT_STORE ?? 'mongodb';
+    if (mode !== 'mongodb' && mode !== 'postgres') throw new Error('Unsupported Product persistence mode');
+    if (mode === 'postgres' && !['development', 'test'].includes(env.NODE_ENV ?? '')) {
+        throw new Error('PostgreSQL Products require explicit development or test environment');
+    }
+    return mode;
+}
+export function catalogUsesPostgres(env: Environment = process.env): boolean {
+    // Evaluate both, including invalid configurations; do not short-circuit validation.
+    const ingredient = ingredientStore(env);
+    const product = productStore(env);
+    return ingredient === 'postgres' || product === 'postgres';
+}
 export function loadPostgresEnvironment() {
     config({ path: resolve(__dirname, '../../.env.postgres'), quiet: true });
 }
 export function postgresUrl(env: Environment = process.env): string {
-    if (ingredientStore(env) !== 'postgres') throw new Error('PostgreSQL Ingredient mode is not enabled');
+    if (!catalogUsesPostgres(env)) throw new Error('PostgreSQL Catalog mode is not enabled');
     const value = env.NODE_ENV === 'test' ? env.TEST_DATABASE_URL : env.DATABASE_URL;
     const database = env.NODE_ENV === 'test' ? 'wavehouse_test' : 'wavehouse_dev';
     let url: URL;
