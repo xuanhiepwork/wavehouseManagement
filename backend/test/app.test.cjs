@@ -75,3 +75,13 @@ test('invalid port fails startup instead of opening a named pipe', () => {
     assert.equal(result.status, 1);
     assert.match(result.stderr, /PORT must be an integer/);
 });
+
+test('readiness supports asynchronous PostgreSQL probes and sanitizes probe failures', async () => {
+    const { server, io } = createApp(async () => { throw new Error('private connection details'); });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+        const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
+        assert.equal(response.status, 503);
+        assert.deepEqual(await response.json(), { status: 'unavailable' });
+    } finally { await new Promise(resolve => io.close(resolve)); }
+});

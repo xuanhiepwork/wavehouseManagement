@@ -1,6 +1,9 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { createApp } from './app';
+import { ingredientStore, loadPostgresEnvironment } from './config/postgres';
+import { createPrismaRuntime } from './db/prisma';
+import { createPostgresIngredientService } from './services/ingredient.postgres.service';
 
 dotenv.config();
 
@@ -9,21 +12,31 @@ export async function startServer() {
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
         throw new Error('PORT must be an integer between 1 and 65535');
     }
-    const { io, server } = createApp();
+    const postgres = ingredientStore() === 'postgres';
+    if (postgres) loadPostgresEnvironment();
+    const runtime = postgres ? createPrismaRuntime() : undefined;
+    const ready = runtime ? async () => mongoose.connection.readyState === 1 && await runtime.ready() : undefined;
+    const { io, server } = runtime
+        ? createApp(ready, { postgresIngredients: createPostgresIngredientService(runtime.client) }) : createApp();
     try {
+        if (runtime) await runtime.connect();
         await mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/wavehouse_db', {
             serverSelectionTimeoutMS: 10000,
         });
         await new Promise<void>((resolve, reject) => {
             server.once('error', reject);
-            server.listen(port, () => {
+            const listening = () => {
                 server.off('error', reject);
                 resolve();
-            });
+            };
+            // The temporary mixed-store mode is loopback-only.
+            if (runtime) server.listen(port, '127.0.0.1', listening);
+            else server.listen(port, listening);
         });
     } catch (error) {
         await mongoose.disconnect();
-        throw error;
+        if (runtime) await runtime.close().catch(() => {});
+        throw new Error('Backend database connection or startup failed');
     }
     console.log(`Backend listening on http://localhost:${port}`);
     let closing = false;
@@ -33,10 +46,10 @@ export async function startServer() {
         const timeout = setTimeout(() => process.exit(1), 10000);
         timeout.unref();
         io.close(() => {
-            void mongoose.disconnect().then(() => {
+            void Promise.all([mongoose.disconnect(), runtime?.close()]).then(() => {
                 clearTimeout(timeout);
             }).catch((error: unknown) => {
-                console.error('Shutdown failed:', error);
+                console.error('Shutdown failed');
                 process.exitCode = 1;
             });
         });
@@ -48,7 +61,8 @@ export async function startServer() {
 
 if (require.main === module) {
     void startServer().catch((error: unknown) => {
-        console.error('Backend startup failed:', error);
+        console.error(error instanceof Error && error.message === 'PORT must be an integer between 1 and 65535'
+            ? error.message : 'Backend startup failed: configuration or database unavailable');
         process.exitCode = 1;
     });
 }

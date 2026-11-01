@@ -4,9 +4,11 @@ import { Server } from 'socket.io';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
-import { ingredientRouter } from './routes/ingredient.routes';
+import { ingredientRouter, postgresIngredientRouter } from './routes/ingredient.routes';
 import { errorHandler } from './middleware/errorHandler';
-import { ingredientPaths, ingredientSchemas } from './config/ingredient.openapi';
+import { ingredientPaths, ingredientSchemas, postgresIngredientDocumentation } from './config/ingredient.openapi';
+import { ingredientStore } from './config/postgres';
+import type { createPostgresIngredientService } from './services/ingredient.postgres.service';
 import { productRouter } from './routes/product.routes';
 import { productPaths, productSchemas } from './config/product.openapi';
 import { recipeRouter } from './routes/recipe.routes';
@@ -29,7 +31,14 @@ const apiDocs = {
     },
 };
 
-export function createApp(isDatabaseReady = () => mongoose.connection.readyState === 1) {
+export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = () => mongoose.connection.readyState === 1,
+    options: { postgresIngredients?: ReturnType<typeof createPostgresIngredientService> } = {}) {
+    const mode = ingredientStore();
+    if ((mode === 'postgres') !== !!options.postgresIngredients) throw new Error('Ingredient implementation selection is incomplete');
+    const docs = mode === 'postgres' ? (() => {
+        const pg = postgresIngredientDocumentation();
+        return { ...apiDocs, components: { schemas: { ...apiDocs.components.schemas, ...pg.schemas } }, paths: { ...apiDocs.paths, ...pg.paths } };
+    })() : apiDocs;
     const app = express();
     const server = http.createServer(app);
     const origin = process.env.CORS_ORIGIN?.split(',').map(value => value.trim()).filter(Boolean) ?? '*';
@@ -37,16 +46,17 @@ export function createApp(isDatabaseReady = () => mongoose.connection.readyState
     app.use(cors({ origin }));
     app.use(express.json());
     app.use(express.urlencoded({ extended: true }));
-    app.get('/api-docs.json', (_req, res) => { res.json(apiDocs); });
-    app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(apiDocs));
+    app.get('/api-docs.json', (_req, res) => { res.json(docs); });
+    app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(docs));
     app.get('/', (_req, res) => {
         res.json({ status: 'success', message: 'WaveHouse Backend Server is running', timestamp: new Date() });
     });
-    app.get('/health', (_req, res) => {
-        const ready = isDatabaseReady();
+    app.get('/health', async (_req, res) => {
+        let ready = false;
+        try { ready = await isDatabaseReady(); } catch { /* Readiness failures are sanitized. */ }
         res.status(ready ? 200 : 503).json({ status: ready ? 'ok' : 'unavailable' });
     });
-    app.use('/api/ingredients', ingredientRouter);
+    app.use('/api/ingredients', options.postgresIngredients ? postgresIngredientRouter(options.postgresIngredients) : ingredientRouter);
     app.use('/api/products', productRouter);
     app.use('/api/recipes', recipeRouter);
     io.on('connection', socket => {

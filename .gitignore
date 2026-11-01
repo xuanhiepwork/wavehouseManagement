@@ -41,6 +41,7 @@ mongodb_data/
 # BUILD & OUTPUTS (Thư mục code sau khi biên dịch)
 # ====================================================================
 dist/
+backend/src/generated/prisma/
 build/
 .expo/
 *.apk

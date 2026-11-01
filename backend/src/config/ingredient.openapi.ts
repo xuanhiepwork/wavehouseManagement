@@ -63,3 +63,29 @@ export const ingredientPaths = {
 // Runtime uniqueness depends on a successfully provisioned MongoDB unique index.
 // Mongoose manages autoIndex via the existing connection lifecycle; deployments
 // disabling it must provision indexes externally. No request initializes indexes.
+
+export function postgresIngredientDocumentation() {
+    const decimal = (scale: number) => ({
+        oneOf: [{ type: 'string', pattern: `^[0-9]+(\\.[0-9]{1,${scale}})?$`, maxLength: 100 }, { type: 'number', minimum: 0 }],
+        description: `Unsigned plain decimal string or bounded finite JSON number. NUMERIC(18,${scale}); at most ${18 - scale} integer digits and ${scale} fractional digits. Excess scale (including trailing zeroes), overflow and negative zero numbers are rejected; no rounding. Numeric input additionally requires scaled integer units <= Number.MAX_SAFE_INTEGER. Use strings for exact large values.`,
+    });
+    const inputs = { ...properties,
+        code: { ...properties.code, maxLength: 64 }, name: { ...properties.name, maxLength: 200 },
+        category: { ...properties.category, maxLength: 100 }, costPrice: decimal(4), minStock: { ...decimal(6), default: '0' },
+    };
+    const outputDecimal = { type: 'string', pattern: '^(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$',
+        description: 'Canonical decimal string: no exponent, redundant leading zeroes or trailing fractional zeroes.' };
+    const schemas = {
+        IngredientInput: { ...ingredientSchemas.IngredientInput, properties: inputs },
+        IngredientPatch: { ...ingredientSchemas.IngredientPatch, properties: inputs },
+        Ingredient: { type: 'object', description: 'PostgreSQL mode: _id is a UUID; __v is omitted. Decimal fields are canonical strings.', properties: {
+            ...inputs, costPrice: outputDecimal, minStock: outputDecimal,
+            _id: { type: 'string', format: 'uuid' }, createdAt: { type: 'string', format: 'date-time' }, updatedAt: { type: 'string', format: 'date-time' },
+        } },
+    };
+    const paths = structuredClone(ingredientPaths);
+    paths['/api/ingredients/{id}'].parameters[0]!.schema.pattern = '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$';
+    paths['/api/ingredients/{id}'].patch.description = 'Updates supplied fields atomically, with explicit normalization. isActive may reactivate records. IDs, timestamps, version, stock and unknown fields are rejected.';
+    paths['/api/ingredients'].get.description += ' PostgreSQL mode uses UUID tie-breakers and database collation; maximum offset is 2147483647. This local/test-only Ingredient store is separate from the legacy MongoDB Recipe catalog.';
+    return { schemas, paths };
+}

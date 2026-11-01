@@ -1,6 +1,96 @@
-# Local PostgreSQL foundation (Phase 1)
+# Local PostgreSQL catalog (Phase 1 and Phase 2.1)
 
-The API remains CommonJS and continues to use MongoDB/Mongoose. This phase adds
+## Phase 2.1: opt-in PostgreSQL Ingredients
+
+MongoDB remains the default for all endpoints. No data is copied, IDs are not
+converted, and no dual writes occur. PostgreSQL Ingredients are an explicitly
+selected local/test implementation; MongoDB Product and Recipe endpoints remain
+unchanged and cannot reference PostgreSQL Ingredient UUIDs. Do not deploy this
+mixed catalog as a production cutover.
+
+After installing dependencies, `npm run build` explicitly generates the pinned
+Prisma 7 CommonJS client and compiles it. Generated files under
+`src/generated/prisma` are ignored. Generation/build never apply migrations.
+The baseline SQL and its constraints remain unchanged.
+
+To opt in locally from `backend` (process variables only):
+
+```powershell
+$env:NODE_ENV = 'development'
+$env:CATALOG_INGREDIENT_STORE = 'postgres'
+npm run build
+npm start
+```
+
+The opt-in requires explicit `development` or `test`; absent/production/unknown
+environments and unknown store values fail before connecting. PostgreSQL mode
+binds the HTTP server to `127.0.0.1`. Development uses only the approved local
+`DATABASE_URL`/development role. Test mode uses only `TEST_DATABASE_URL`/test role,
+never a fallback. Runtime loads `backend/.env.postgres` explicitly in PostgreSQL
+mode; exported values take precedence. It never uses the shadow URL. Startup
+verifies PostgreSQL identity/role isolation before accepting traffic, then retains
+the MongoDB connection for Product/Recipe. In this mode `/health` requires both
+MongoDB connectivity and a successful live PostgreSQL probe. Legacy mode keeps
+its MongoDB startup/readiness and listening behavior. Shutdown closes both clients.
+Neither startup nor requests create schemas, indexes or migrations.
+
+To return to the default, remove `CATALOG_INGREDIENT_STORE` from the process.
+Do not edit environment files to run tests. `npm run test:postgres` verifies the
+isolated test role before deploying reviewed migrations **to test only**, then
+runs both rollback-only SQL fixtures and the real Prisma Ingredient HTTP suite.
+The HTTP suite verifies the role again and removes only its own random exact
+codes within its own category; it never truncates, resets or uses development.
+Independent clients exercise duplicate POST/PATCH, partial updates and DELETE
+concurrency. MongoDB is not needed for these HTTP fixtures.
+
+PostgreSQL Ingredient contracts intentionally differ:
+
+- `_id` is a UUID; `__v` is omitted. Existing ObjectIds are not translated.
+- `costPrice` and `minStock` responses are canonical unsigned decimal strings:
+  no exponent, redundant leading zeroes, or trailing fractional zeroes.
+- Input accepts unsigned plain decimal strings and bounded finite JSON numbers.
+  Prices allow 14 integer/4 fractional digits; minimum stock allows 12 integer/6
+  fractional digits. Excess fractional digits, even trailing zeroes, are rejected
+  before writing. No rounding is performed. Strings have at most 100 characters.
+  Numeric inputs must round-trip through their decimal representation, and their
+  scaled integer units must be at most `Number.MAX_SAFE_INTEGER`; negative zero
+  is rejected. Send strings for large exact values. JSON parsing has already
+  interpreted numeric tokens as JavaScript numbers, so strings are the reliable
+  representation when original decimal spelling/precision matters.
+- Normalized code/name/category limits are 64/200/100 PostgreSQL characters;
+  embedded NULs are rejected. Codes remain reserved across inactive records.
+- Existing query defaults and envelopes remain. SQL collation can differ from
+  MongoDB; literal `%`, `_`, backslash and regex characters are supported in
+  search. Pagination offset is limited to 2147483647 in this implementation.
+- PATCH updates supplied fields atomically. DELETE locks the target and changes
+  `isActive` only when needed, preserving timestamps on repeated deletion.
+
+The selected mode's `/api-docs.json` describes its actual Ingredient contract.
+Product/Recipe documentation and validators retain their legacy contracts.
+Unexpected database errors are replaced with generic failures before reaching
+the shared handler; logs never include raw database errors or URLs.
+
+Verification commands: `npm run prisma:validate`, `npm run prisma:generate`,
+`npm run build`, `npm run test:postgres`, and `npm test`. Ordinary `npm test`
+does not load the PostgreSQL env file; explicitly export only the dedicated test
+URL into the process to include live PostgreSQL suites. Missing integration
+configuration is a reported skip, not a database test pass.
+
+Phase 2.1 implementation verification (2026-11-01): Prisma validation, client
+generation, TypeScript build, CommonJS source/compiled imports, startup lifecycle
+checks and existing Ingredient regressions passed. The dedicated PostgreSQL
+runner passed 17 tests with no failures/skips. The full backend suite, with the
+dedicated test URL explicitly supplied, passed 88 tests with zero failures and
+three MongoDB integration skips (`MONGODB_TEST_URI` absent). Development, shadow
+and test table-content/migration fingerprints were unchanged after fixture
+cleanup. The baseline SHA-256 remains
+`2ba20138f93a57188d0c802bf2a861a3d7d417d80afd24940da4f1f6f10778b4`.
+The dependency audit reports five moderate findings in existing Swagger/dev-tool
+dependency chains; no existing package versions were upgraded in this phase.
+
+## Phase 1 foundation reference
+
+The API remains CommonJS and defaults to MongoDB/Mongoose. Phase 1 added
 only PostgreSQL catalog schema, reviewed migrations, tooling, and direct `pg`
 integration tests. It does not migrate MongoDB records or integrate a Prisma
 runtime client. Use Node.js 24 LTS, Docker Desktop with Linux containers, and

@@ -20,6 +20,6 @@ export const errorHandler: ErrorRequestHandler = (error, _req, res, next) => {
         status = error.status;
         message = 'Invalid request';
     }
-    if (status === 500) console.error(error);
+    if (status === 500) console.error('Request failed: Internal server error');
     res.status(status).json({ error: message });
 };
