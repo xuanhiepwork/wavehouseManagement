@@ -7,13 +7,14 @@ import swaggerUi from 'swagger-ui-express';
 import { ingredientRouter, postgresIngredientRouter } from './routes/ingredient.routes';
 import { errorHandler } from './middleware/errorHandler';
 import { ingredientPaths, ingredientSchemas, postgresIngredientDocumentation } from './config/ingredient.openapi';
-import { ingredientStore, productStore } from './config/postgres';
+import { ingredientStore, productStore, recipeStore } from './config/postgres';
 import type { createPostgresIngredientService } from './services/ingredient.postgres.service';
 import { productRouter, postgresProductRouter } from './routes/product.routes';
 import { productPaths, productSchemas, postgresProductDocumentation } from './config/product.openapi';
 import type { createPostgresProductService } from './services/product.postgres.service';
-import { recipeRouter } from './routes/recipe.routes';
-import { recipePaths, recipeSchemas } from './config/recipe.openapi';
+import { recipeRouter, postgresRecipeRouter } from './routes/recipe.routes';
+import { recipePaths, recipeSchemas, postgresRecipeDocumentation } from './config/recipe.openapi';
+import type { createPostgresRecipeService } from './services/recipe.postgres.service';
 
 // Explicit paths keep documentation working after TypeScript sources are compiled.
 const apiDocs = {
@@ -34,16 +35,20 @@ const apiDocs = {
 
 export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = () => mongoose.connection.readyState === 1,
     options: { postgresIngredients?: ReturnType<typeof createPostgresIngredientService>;
-        postgresProducts?: ReturnType<typeof createPostgresProductService> } = {}) {
+        postgresProducts?: ReturnType<typeof createPostgresProductService>;
+        postgresRecipes?: ReturnType<typeof createPostgresRecipeService> } = {}) {
     const mode = ingredientStore();
     const products = productStore();
+    const recipes = recipeStore();
     if ((mode === 'postgres') !== !!options.postgresIngredients) throw new Error('Ingredient implementation selection is incomplete');
     if ((products === 'postgres') !== !!options.postgresProducts) throw new Error('Product implementation selection is incomplete');
+    if ((recipes === 'postgres') !== !!options.postgresRecipes) throw new Error('Recipe implementation selection is incomplete');
     const ingredientDocs = mode === 'postgres' ? postgresIngredientDocumentation() : { schemas: {}, paths: {} };
     const productDocs = products === 'postgres' ? postgresProductDocumentation() : { schemas: {}, paths: {} };
+    const recipeDocs = recipes === 'postgres' ? postgresRecipeDocumentation() : { schemas: {}, paths: {} };
     const docs = { ...apiDocs,
-        components: { schemas: { ...apiDocs.components.schemas, ...ingredientDocs.schemas, ...productDocs.schemas } },
-        paths: { ...apiDocs.paths, ...ingredientDocs.paths, ...productDocs.paths } };
+        components: { schemas: { ...apiDocs.components.schemas, ...ingredientDocs.schemas, ...productDocs.schemas, ...recipeDocs.schemas } },
+        paths: { ...apiDocs.paths, ...ingredientDocs.paths, ...productDocs.paths, ...recipeDocs.paths } };
     const app = express();
     const server = http.createServer(app);
     const origin = process.env.CORS_ORIGIN?.split(',').map(value => value.trim()).filter(Boolean) ?? '*';
@@ -63,7 +68,7 @@ export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = ()
     });
     app.use('/api/ingredients', options.postgresIngredients ? postgresIngredientRouter(options.postgresIngredients) : ingredientRouter);
     app.use('/api/products', options.postgresProducts ? postgresProductRouter(options.postgresProducts) : productRouter);
-    app.use('/api/recipes', recipeRouter);
+    app.use('/api/recipes', options.postgresRecipes ? postgresRecipeRouter(options.postgresRecipes) : recipeRouter);
     io.on('connection', socket => {
         // Notification relay only; inventory persistence is not implemented yet.
         socket.on('update_inventory', (data: unknown) => { io.emit('inventory_changed', data); });

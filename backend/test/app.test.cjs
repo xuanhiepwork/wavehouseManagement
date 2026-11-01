@@ -112,3 +112,25 @@ test('all four catalog selections compose independent routes and documentation',
         assert.throws(() => createApp(() => true), /selection is incomplete/);
     } finally { for (const [key, value] of Object.entries(before)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } }
 });
+
+test('Recipe PostgreSQL composition requires all three opt-ins and leaves other contracts selected independently', async () => {
+    const keys = ['NODE_ENV', 'CATALOG_INGREDIENT_STORE', 'CATALOG_PRODUCT_STORE', 'CATALOG_RECIPE_STORE'];
+    const before = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+    try {
+        process.env.NODE_ENV = 'test'; process.env.CATALOG_RECIPE_STORE = 'postgres';
+        for (const [ingredient, product] of [['mongodb', 'mongodb'], ['postgres', 'mongodb'], ['mongodb', 'postgres']]) {
+            process.env.CATALOG_INGREDIENT_STORE = ingredient; process.env.CATALOG_PRODUCT_STORE = product;
+            assert.throws(() => createApp(() => true, {}), /require explicit PostgreSQL/);
+        }
+        process.env.CATALOG_INGREDIENT_STORE = 'postgres'; process.env.CATALOG_PRODUCT_STORE = 'postgres';
+        assert.throws(() => createApp(() => true, { postgresIngredients: {}, postgresProducts: {} }), /Recipe implementation selection/);
+        const { server, io } = createApp(() => true, { postgresIngredients: {}, postgresProducts: {}, postgresRecipes: { getRecipe: async () => ({ marker: 'recipe' }) } });
+        await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+        try {
+            const base = `http://127.0.0.1:${server.address().port}`;
+            const docs = await (await fetch(base + '/api-docs.json')).json();
+            for (const model of ['Ingredient', 'Product', 'Recipe']) assert.equal(docs.components.schemas[model].properties._id.format, 'uuid');
+            assert.equal((await fetch(base + '/api/recipes/11111111-1111-4111-8111-111111111111')).status, 200);
+        } finally { await new Promise(resolve => io.close(resolve)); }
+    } finally { for (const [key, value] of Object.entries(before)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } }
+});

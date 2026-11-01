@@ -18,11 +18,30 @@ export function productStore(env: Environment = process.env): 'mongodb' | 'postg
     }
     return mode;
 }
+export function recipeStore(env: Environment = process.env): 'mongodb' | 'postgres' {
+    const mode = env.CATALOG_RECIPE_STORE ?? 'mongodb';
+    if (mode !== 'mongodb' && mode !== 'postgres') throw new Error('Unsupported Recipe persistence mode');
+    if (mode === 'postgres') {
+        if (!['development', 'test'].includes(env.NODE_ENV ?? '')) throw new Error('PostgreSQL Recipes require explicit development or test environment');
+        if (ingredientStore(env) !== 'postgres' || productStore(env) !== 'postgres') {
+            throw new Error('PostgreSQL Recipes require explicit PostgreSQL Ingredient and Product stores');
+        }
+    }
+    return mode;
+}
 export function catalogUsesPostgres(env: Environment = process.env): boolean {
-    // Evaluate both, including invalid configurations; do not short-circuit validation.
+    // Evaluate every store, including invalid configurations; do not short-circuit validation.
     const ingredient = ingredientStore(env);
     const product = productStore(env);
-    return ingredient === 'postgres' || product === 'postgres';
+    const recipe = recipeStore(env);
+    return ingredient === 'postgres' || product === 'postgres' || recipe === 'postgres';
+}
+export function catalogUsesMongo(env: Environment = process.env): boolean {
+    // Validate all selections before deriving dependencies, including Recipe prerequisites.
+    const ingredient = ingredientStore(env);
+    const product = productStore(env);
+    const recipe = recipeStore(env);
+    return ingredient === 'mongodb' || product === 'mongodb' || recipe === 'mongodb';
 }
 export function loadPostgresEnvironment() {
     config({ path: resolve(__dirname, '../../.env.postgres'), quiet: true });
