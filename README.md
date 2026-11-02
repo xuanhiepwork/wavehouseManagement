@@ -352,4 +352,4 @@ Ví dụ: `feature/backend-stock-import`
 | `docs/` | Viết hoặc sửa tài liệu | `docs/backend-stock-import-api` |
 | `tests/` | Thêm hoặc sửa kiểm thử | `tests/backend-stock-import` |
 | `feature/web-` | Thêm giao diện hoặc chức năng trên web | `feature/web-login-page` |
-| `feature/mobile-` | Thêm giao diện hoặc chức năng trên mobile | `feature/mobile-login-screen` |
+| `feature/mobile-` | Thêm giao diện hoặc chức năng trên mobile | `feature/mobile-login-screen` |.
