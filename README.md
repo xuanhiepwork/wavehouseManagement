@@ -327,3 +327,29 @@ Danh sách bảng ở trên là thiết kế dự kiến, được sử dụng l
 Tên bảng, quan hệ, thuộc tính và các ràng buộc có thể được điều chỉnh sau khi hoàn thành phân tích nghiệp vụ chi tiết.
 
 Kiến trúc PostgreSQL + Prisma là công nghệ mục tiêu cho giai đoạn phát triển tiếp theo. Các thành phần MongoDB/Mongoose còn tồn tại trong repository sẽ được đánh giá và chuyển đổi theo kế hoạch migration đã được phê duyệt.
+
+
+---
+
+## Quy tắc đặt tên nhánh
+
+Cấu trúc:
+
+```text
+<loại>/<phạm-vi>-<nội-dung>
+```
+
+Ví dụ: `feature/backend-stock-import`
+
+### Loại công việc
+
+| Tiền tố | Mục đích | Ví dụ |
+| --- | --- | --- |
+| `feature/` | Thêm chức năng | `feature/backend-stock-import` |
+| `fix/` | Sửa lỗi | `fix/web-inventory-filter` |
+| `refactor/` | Cải tổ code, giữ nguyên hành vi | `refactor/backend-stock-service` |
+| `chore/` | Cấu hình, cập nhật thư viện, bảo trì | `chore/backend-eslint` |
+| `docs/` | Viết hoặc sửa tài liệu | `docs/backend-stock-import-api` |
+| `tests/` | Thêm hoặc sửa kiểm thử | `tests/backend-stock-import` |
+| `feature/web-` | Thêm giao diện hoặc chức năng trên web | `feature/web-login-page` |
+| `feature/mobile-` | Thêm giao diện hoặc chức năng trên mobile | `feature/mobile-login-screen` |
