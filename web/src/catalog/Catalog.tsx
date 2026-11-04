@@ -2,10 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { CatalogApiError } from '../api/catalog'
 import type { CatalogClient, Ingredient, IngredientQuery, PageEnvelope, Product, ProductSize, Recipe, BaseUnit } from '../api/catalog'
+import CatalogCreation from './CatalogCreation'
+import { useCatalogCreation } from './useCatalogCreation'
+import type { CatalogCreationModel, CreationClient } from './useCatalogCreation'
 import './Catalog.css'
 
-// Components only receive reads, even when passed the full API client.
+// Recipe views only receive reads. Creation capabilities are limited to Ingredients and Products.
 type ReadClient = { [K in keyof CatalogClient]: Pick<CatalogClient[K], 'list' | 'detail'> }
+type WorkspaceClient = ReadClient & CreationClient
 type Section = keyof ReadClient
 type RecordItem = Ingredient | Product | Recipe
 const sections: Section[] = ['ingredients', 'products', 'recipes']
@@ -141,12 +145,19 @@ function DetailPanel({ client, section, id, reader, close }: { client: ReadClien
     {state.loading && <p className="feedback" role="status">Loading details…</p>}{state.error && <ErrorState message={state.error} retry={state.retry} />}{state.data && <RecordDetails item={state.data} reader={reader} />}
   </section>
 }
-function Workspace({ section, client }: { section: Section; client: ReadClient }) {
+function Workspace({ section, client, creation }: { section: Section; client: WorkspaceClient; creation?: CatalogCreationModel }) {
   const [filters, setFilters] = useState(defaults)
   const [page, setPage] = useState(1)
   const [limit, setLimit] = useState(20)
   const [selected, setSelected] = useState<string>()
+  const [notice, setNotice] = useState('')
   const selectionButton = useRef<HTMLButtonElement | null>(null)
+  const creationButton = useRef<HTMLButtonElement | null>(null)
+  const creationWasVisible = useRef(false)
+  useEffect(() => {
+    if (creationWasVisible.current && !creation?.visible && !selected) creationButton.current?.focus()
+    creationWasVisible.current = Boolean(creation?.visible)
+  }, [creation?.visible, selected])
   const load = useCallback(async (): Promise<PageEnvelope<RecordItem> & { reader: ReferenceReader }> => {
     const paging = { page, limit }
     const active = filters.status === '' ? undefined : filters.status === 'true'
@@ -162,9 +173,17 @@ function Workspace({ section, client }: { section: Section; client: ReadClient }
   function select(id: string, button: HTMLButtonElement) { selectionButton.current = button; setSelected(id) }
   function changePage(next: number) { setPage(next); setSelected(undefined) }
   function apply(next: Filters) { setFilters({ ...next }); setPage(1); setSelected(undefined) }
+  function created(record: Ingredient | Product) {
+    setPage(1)
+    setSelected(undefined)
+    setNotice(`${record.code} created successfully. Showing page 1 with your current filters; the new record may be hidden by those filters or appear on another page.`)
+    state.retry()
+  }
   const title = titles[section]
   return <>
-    <header className="workspace-heading"><div><p className="eyebrow">Catalog / {title}</p><h1>{title}</h1><p className="muted">{descriptions[section]}</p></div><span className="read-only">Read only</span></header>
+    <header className="workspace-heading"><div><p className="eyebrow">Catalog / {title}</p><h1>{title}</h1><p className="muted">{descriptions[section]}</p></div>{creation ? <button ref={creationButton} className="primary-button" type="button" onClick={creation.open} disabled={creation.busy}>New {section === 'ingredients' ? 'ingredient' : 'product'}</button> : <span className="read-only">Read only</span>}</header>
+    {notice && <p className="creation-success" role="status">{notice}</p>}
+    {creation && <CatalogCreation model={creation} onCreated={created} onRefreshed={state.retry} onViewExisting={id => { setSelected(id); creation.close() }} />}
     <div className={`catalog-layout ${selected ? 'with-details' : ''}`}>
       <section className="list-panel surface" aria-label={`${title} directory`}>
         <div className="panel-heading"><div><h2>{title} directory</h2><p className="muted">{data ? `${data.pagination.total} records matching your filters` : 'Browse your catalog'}</p></div></div>
@@ -191,13 +210,16 @@ function Workspace({ section, client }: { section: Section; client: ReadClient }
     </div>
   </>
 }
-export default function Catalog({ client }: { client: ReadClient }) {
+export default function Catalog({ client }: { client: WorkspaceClient }) {
   const [section, setSection] = useState<Section>('ingredients')
+  const ingredientCreation = useCatalogCreation('ingredients', client)
+  const productCreation = useCatalogCreation('products', client)
+  const busy = ingredientCreation.busy || productCreation.busy
   return <div className="catalog-shell"><a className="skip-link" href="#catalog-main">Skip to catalog</a>
     <aside className="sidebar"><div className="brand"><span className="brand-mark" aria-hidden="true">W</span><div>WaveHouse<span>MANAGEMENT</span></div></div><p className="nav-label">Workspace</p>
-      <nav aria-label="Catalog sections">{sections.map((item, index) => <button type="button" key={item} aria-current={section === item ? 'page' : undefined} onClick={() => setSection(item)}><span className="nav-symbol" aria-hidden="true">{['◫', '◇', '≋'][index]}</span>{titles[item]}</button>)}</nav>
+      <nav aria-label="Catalog sections">{sections.map((item, index) => <button type="button" key={item} aria-current={section === item ? 'page' : undefined} disabled={busy} onClick={() => setSection(item)}><span className="nav-symbol" aria-hidden="true">{['◫', '◇', '≋'][index]}</span>{titles[item]}</button>)}</nav>
       <div className="sidebar-note"><span className="sidebar-note-dot" aria-hidden="true" /><strong>Catalog workspace</strong><p>Ingredients, products<br />and the recipes that connect them.</p></div>
     </aside>
-    <div className="workspace"><div className="topbar"><span>Workspace <span aria-hidden="true">/</span> <strong>Catalog</strong></span><span className="workspace-label">WaveHouse Admin</span></div><main id="catalog-main" tabIndex={-1}><Workspace key={section} section={section} client={client} /></main><footer className="workspace-footer">WaveHouse Management <span>Catalog · Read-only access</span></footer></div>
+    <div className="workspace"><div className="topbar"><span>Workspace <span aria-hidden="true">/</span> <strong>Catalog</strong></span><span className="workspace-label">WaveHouse Admin</span></div><main id="catalog-main" tabIndex={-1}><Workspace key={section} section={section} client={client} creation={section === 'ingredients' ? ingredientCreation : section === 'products' ? productCreation : undefined} /></main><footer className="workspace-footer">WaveHouse Management <span>Catalog · Browse &amp; create</span></footer></div>
   </div>
 }
