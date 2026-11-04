@@ -1,0 +1,345 @@
+// @vitest-environment jsdom
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { StrictMode } from 'react'
+import { createCatalogClient } from '../api/catalog'
+import type { Ingredient, Product, Recipe } from '../api/catalog'
+import App from '../App'
+import Catalog from './Catalog'
+
+const milkId = '11111111-1111-1111-1111-111111111111'
+const sugarId = '22222222-2222-2222-2222-222222222222'
+const teaId = '33333333-3333-3333-3333-333333333333'
+const recipeId = '44444444-4444-4444-4444-444444444444'
+const meta = { createdAt: '2026-11-04T00:00:00.000Z', updatedAt: '2026-11-04T01:00:00.000Z' }
+const milk: Ingredient = { ...meta, _id: milkId, code: 'MILK', name: 'Oat milk', category: 'Dairy', unit: 'ml', costPrice: '99999999999999.9999', minStock: '999999999999.999999', isActive: true }
+const sugar: Ingredient = { ...milk, _id: sugarId, code: 'SUGAR', name: 'Historical sugar', unit: 'g', costPrice: '0.0001', minStock: '0', isActive: false }
+const tea: Product = { ...meta, _id: teaId, code: 'TEA', name: 'House tea', category: 'Drinks', isAvailable: true, prices: [{ size: 'S', price: '0.0001' }, { size: 'M', price: '12345.6789' }, { size: 'L', price: '99999999999999.9999' }] }
+const recipe: Recipe = { ...meta, _id: recipeId, productId: teaId, size: 'L', version: 7, isActive: false, ingredients: [{ ingredientId: sugarId, quantity: '0.000001' }, { ingredientId: milkId, quantity: '999999999999.999999' }] }
+function json(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } }) }
+function page(data: unknown[], pageNumber = 1, total = data.length, limit = 20) { return json({ data, pagination: { page: pageNumber, limit, total, totalPages: Math.ceil(total / limit) } }) }
+function defaults(url: URL): Response {
+  if (url.pathname === '/api/ingredients') return page([milk, sugar], Number(url.searchParams.get('page') ?? 1), 42, Number(url.searchParams.get('limit') ?? 20))
+  if (url.pathname === `/api/ingredients/${milkId}`) return json({ data: milk })
+  if (url.pathname === `/api/ingredients/${sugarId}`) return json({ data: sugar })
+  if (url.pathname === '/api/products') return page([tea])
+  if (url.pathname === `/api/products/${teaId}`) return json({ data: tea })
+  if (url.pathname === '/api/recipes') return page([recipe])
+  if (url.pathname === `/api/recipes/${recipeId}`) return json({ data: recipe })
+  return json({ error: 'Not found' }, 404)
+}
+function setup(override?: (url: URL) => Response | Promise<Response> | undefined, strict = false) {
+  const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async (input, init) => {
+    if (init?.method !== 'GET') throw new Error('Mutation attempted by read-only UI')
+    const url = new URL(String(input))
+    return override?.(url) ?? defaults(url)
+  })
+  const client = createCatalogClient({ baseUrl: 'http://127.0.0.1:5000/api', fetch })
+  render(strict ? <StrictMode><Catalog client={client} /></StrictMode> : <Catalog client={client} />)
+  return { fetch, client, user: userEvent.setup(), urls: () => fetch.mock.calls.map(([input]) => new URL(String(input))) }
+}
+async function navigate(user: ReturnType<typeof userEvent.setup>, title: string) {
+  await user.click(screen.getByRole('button', { name: title }))
+  await screen.findByRole('table', { name: `${title} catalog` })
+}
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
+}
+afterEach(() => { cleanup(); vi.unstubAllEnvs(); vi.unstubAllGlobals() })
+
+describe('catalog navigation and records', () => {
+  it('loads ingredients with the API active-only default and exact decimal text', async () => {
+    const { urls } = setup()
+    const table = await screen.findByRole('table', { name: 'Ingredients catalog' })
+    expect(within(table).getByText(milk.costPrice).textContent).toBe(milk.costPrice)
+    expect(within(table).getByText(milk.minStock).textContent).toBe(milk.minStock)
+    expect(within(table).getByText('ml')).toBeTruthy()
+    expect(within(table).getByText('MILK')).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: 'Status' })).toHaveProperty('value', '')
+    expect(urls()[0].searchParams.has('isActive')).toBe(false)
+    expect(screen.getByRole('button', { name: 'Ingredients' }).getAttribute('aria-current')).toBe('page')
+  })
+  it('opens ingredient details with keyboard and restores focus when closed', async () => {
+    const { user, urls } = setup()
+    const button = await screen.findByRole('button', { name: 'View Oat milk' })
+    button.focus()
+    await user.keyboard('{Enter}')
+    const details = screen.getByRole('region', { name: 'Record details' })
+    await within(details).findByText(milk.costPrice)
+    expect(within(details).getByText(milk.minStock).textContent).toBe(milk.minStock)
+    expect(within(details).getByText(milkId)).toBeTruthy()
+    expect(document.activeElement).toBe(within(details).getByRole('heading', { name: 'Record details' }))
+    expect(urls().some(url => url.pathname === `/api/ingredients/${milkId}`)).toBe(true)
+    await user.click(within(details).getByRole('button', { name: 'Close details' }))
+    expect(screen.queryByRole('region', { name: 'Record details' })).toBeNull()
+    expect(document.activeElement).toBe(button)
+  })
+  it('renders product list and details with S/M/L prices and optional-field placeholders', async () => {
+    const { user } = setup()
+    await navigate(user, 'Products')
+    const table = screen.getByRole('table', { name: 'Products catalog' })
+    expect(within(table).getByText('Drinks')).toBeTruthy()
+    expect(within(table).getByText('Available')).toBeTruthy()
+    expect(Array.from(table.querySelectorAll('.size-label')).map(node => node.textContent)).toEqual(['S', 'M', 'L'])
+    expect(Array.from(table.querySelectorAll('.decimal')).map(node => node.textContent)).toEqual(tea.prices.map(entry => entry.price))
+    await user.click(screen.getByRole('button', { name: 'View House tea' }))
+    const details = screen.getByRole('region', { name: 'Record details' })
+    await within(details).findByText('No description provided.')
+    expect(within(details).getByText('No image available')).toBeTruthy()
+    expect(Array.from(details.querySelectorAll('.decimal')).map(node => node.textContent)).toEqual(tea.prices.map(entry => entry.price))
+  })
+  it('handles supplied description/image and broken images', async () => {
+    const { user } = setup(url => url.pathname === `/api/products/${teaId}` ? json({ data: { ...tea, description: 'Freshly brewed.\nServed cold.', imageUrl: 'https://images.example.test/tea.png' } }) : undefined)
+    await navigate(user, 'Products')
+    await user.click(screen.getByRole('button', { name: 'View House tea' }))
+    const image = await screen.findByRole('img', { name: 'House tea' })
+    expect(image.getAttribute('src')).toBe('https://images.example.test/tea.png')
+    expect(screen.getByText(/Freshly brewed/).textContent).toBe('Freshly brewed.\nServed cold.')
+    fireEvent.error(image)
+    expect(await screen.findByText('Image unavailable')).toBeTruthy()
+  })
+  it.each(['', 'javascript:alert(1)', 'not a URL'])('handles empty or unsupported imageUrl %s', async imageUrl => {
+    const { user } = setup(url => url.pathname === `/api/products/${teaId}` ? json({ data: { ...tea, description: '', imageUrl } }) : undefined)
+    await navigate(user, 'Products')
+    await user.click(screen.getByRole('button', { name: 'View House tea' }))
+    expect(await screen.findByText('No image available')).toBeTruthy()
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.getByText('No description provided.')).toBeTruthy()
+  })
+  it('resolves raw Recipe references, including historical inactive ingredients, in list and detail', async () => {
+    const { user, urls } = setup()
+    await navigate(user, 'Recipes')
+    const table = screen.getByRole('table', { name: 'Recipes catalog' })
+    await within(table).findByText('Historical sugar')
+    expect(within(table).getByText('House tea')).toBeTruthy()
+    expect(within(table).getByText(teaId)).toBeTruthy()
+    expect(within(table).getByText('v7')).toBeTruthy()
+    const items = within(table).getAllByRole('listitem')
+    expect(items[0].textContent).toContain('Historical sugar')
+    expect(items[0].textContent).toContain('Inactive')
+    expect(items[0].textContent).toContain('0.000001')
+    expect(items[1].textContent).toContain(milk.minStock)
+    expect(urls().some(url => url.pathname === `/api/ingredients/${sugarId}`)).toBe(true)
+    await user.click(within(table).getByRole('button', { name: /^View recipe/ }))
+    const details = screen.getByRole('region', { name: 'Record details' })
+    await within(details).findByText('Historical sugar')
+    expect(within(details).getByText(recipeId)).toBeTruthy()
+    expect(within(details).getByText('0.000001').textContent).toBe('0.000001')
+    expect(within(details).getByText(milk.minStock).textContent).toBe('999999999999.999999')
+  })
+  it('preserves server Recipe row and ingredient ordering instead of sorting names or versions', async () => {
+    const second = { ...recipe, _id: '55555555-5555-5555-5555-555555555555', size: 'M', version: 9 }
+    const { user } = setup(url => url.pathname === '/api/recipes' ? page([recipe, second]) : undefined)
+    await navigate(user, 'Recipes')
+    const rows = within(screen.getByRole('table')).getAllByRole('row').slice(1)
+    expect(within(rows[0]).getByText('v7')).toBeTruthy()
+    expect(within(rows[1]).getByText('v9')).toBeTruthy()
+    await within(rows[0]).findByText('Historical sugar')
+    expect(within(rows[0]).getAllByRole('listitem')[0].textContent).toContain('Historical sugar')
+  })
+})
+
+describe('filters and pagination', () => {
+  it('applies ingredient search/category/unit/status/sort and resets to the active default', async () => {
+    const { user, urls } = setup()
+    await screen.findByRole('table')
+    await user.type(screen.getByRole('searchbox', { name: 'Search' }), ' milk & cream ')
+    await user.type(screen.getByRole('textbox', { name: 'Category' }), ' Dairy ')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Unit' }), 'ml')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Status' }), 'false')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Sort by' }), 'costPrice')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Order' }), 'desc')
+    expect(urls()).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }))
+    await waitFor(() => expect(urls()).toHaveLength(2))
+    expect(Object.fromEntries(urls().at(-1)!.searchParams)).toEqual({ page: '1', limit: '20', search: 'milk & cream', category: 'Dairy', unit: 'ml', isActive: 'false', sortBy: 'costPrice', sortOrder: 'desc' })
+    await user.click(screen.getByRole('button', { name: 'Reset' }))
+    await waitFor(() => expect(urls()).toHaveLength(3))
+    expect(Object.fromEntries(urls().at(-1)!.searchParams)).toEqual({ page: '1', limit: '20', sortBy: 'name', sortOrder: 'asc' })
+    expect(screen.getByRole('searchbox')).toHaveProperty('value', '')
+  })
+  it('filters products by search, category and false availability', async () => {
+    const { user, urls } = setup()
+    await navigate(user, 'Products')
+    await user.type(screen.getByRole('searchbox'), 'Tea')
+    await user.type(screen.getByRole('textbox', { name: 'Category' }), 'Drinks')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Availability' }), 'false')
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }))
+    await waitFor(() => expect(urls().at(-1)?.searchParams.get('isAvailable')).toBe('false'))
+    expect(Object.fromEntries(urls().at(-1)!.searchParams)).toEqual({ page: '1', limit: '20', search: 'Tea', category: 'Drinks', isAvailable: 'false' })
+  })
+  it('filters recipes by product UUID, size and inactive state', async () => {
+    const { user, urls } = setup()
+    await navigate(user, 'Recipes')
+    await user.type(screen.getByRole('textbox', { name: 'Product ID' }), teaId)
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Size' }), 'L')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Status' }), 'false')
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }))
+    await waitFor(() => expect(urls().filter(url => url.pathname === '/api/recipes')).toHaveLength(2))
+    const query = urls().filter(url => url.pathname === '/api/recipes').at(-1)!.searchParams
+    expect(Object.fromEntries(query)).toEqual({ page: '1', limit: '20', productId: teaId, size: 'L', isActive: 'false' })
+  })
+  it('keeps applied filters across pages and clears selection on page/filter/page-size changes', async () => {
+    const { user, urls } = setup()
+    await screen.findByRole('table')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Status' }), 'false')
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }))
+    await screen.findByRole('table')
+    await user.click(screen.getByRole('button', { name: 'View Oat milk' }))
+    await screen.findByRole('region', { name: 'Record details' })
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByText('Page 2 of 3')
+    expect(screen.queryByRole('region', { name: 'Record details' })).toBeNull()
+    expect(urls().at(-1)!.searchParams.get('isActive')).toBe('false')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Rows per page' }), '10')
+    await screen.findByText('Page 1 of 5')
+    expect(urls().at(-1)!.searchParams.get('limit')).toBe('10')
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByText('Page 2 of 5')
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }))
+    await screen.findByText('Page 1 of 5')
+  })
+  it('disables page boundaries and supports returning from an empty page', async () => {
+    const { user } = setup(url => url.pathname === '/api/ingredients' && url.searchParams.get('page') === '2' ? page([], 2, 1) : url.pathname === '/api/ingredients' ? page([milk], 1, 21) : undefined)
+    await screen.findByRole('table')
+    expect(screen.getByRole('button', { name: 'Previous' })).toHaveProperty('disabled', true)
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByText('No ingredients found')
+    expect(screen.getByRole('button', { name: 'Next' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Previous' })).toHaveProperty('disabled', false)
+    await user.click(screen.getByRole('button', { name: 'Previous' }))
+    await screen.findByRole('table')
+  })
+})
+
+describe('loading, empty, error and retry states', () => {
+  it.each(['Ingredients', 'Products', 'Recipes'])('shows %s loading and empty states', async title => {
+    const pending = deferred<Response>()
+    const path = `/api/${title.toLowerCase()}`
+    const { user } = setup(url => url.pathname === path ? pending.promise : undefined)
+    if (title !== 'Ingredients') await user.click(screen.getByRole('button', { name: title }))
+    expect(screen.getByRole('status').textContent).toContain(`Loading ${title.toLowerCase()}`)
+    await act(async () => pending.resolve(page([])))
+    expect(await screen.findByText(`No ${title.toLowerCase()} found`)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Next' })).toHaveProperty('disabled', true)
+  })
+  it.each(['Ingredients', 'Products', 'Recipes'])('retries a failed %s list without leaking server details', async title => {
+    let failing = true
+    const { user } = setup(url => url.pathname === `/api/${title.toLowerCase()}` && failing ? json({ error: 'database password SECRET' }, 500) : undefined)
+    if (title !== 'Ingredients') await user.click(screen.getByRole('button', { name: title }))
+    expect((await screen.findByRole('alert')).textContent).toContain('catalog service encountered an error')
+    expect(document.body.textContent).not.toContain('SECRET')
+    failing = false
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByRole('table', { name: `${title} catalog` })).toBeTruthy()
+  })
+  it('shows detail loading and retries a missing record', async () => {
+    const pending = deferred<Response>()
+    let failing = true
+    const { user } = setup(url => url.pathname === `/api/ingredients/${milkId}` ? failing ? pending.promise : json({ data: milk }) : undefined)
+    await user.click(await screen.findByRole('button', { name: 'View Oat milk' }))
+    const details = screen.getByRole('region', { name: 'Record details' })
+    expect(within(details).getByRole('status').textContent).toContain('Loading details')
+    await act(async () => pending.resolve(json({ error: 'Not found' }, 404)))
+    expect((await within(details).findByRole('alert')).textContent).toContain('not found')
+    failing = false
+    await user.click(within(details).getByRole('button', { name: 'Retry' }))
+    expect(await within(details).findByText(milk.costPrice)).toBeTruthy()
+  })
+  it('keeps IDs and quantities visible when reference names fail, and retries them independently', async () => {
+    let failing = true
+    const { user, urls } = setup(url => [ `/api/products/${teaId}`, `/api/ingredients/${sugarId}` ].includes(url.pathname) && failing ? json({ error: 'Not found' }, 404) : undefined)
+    await navigate(user, 'Recipes')
+    await screen.findAllByText(/Name unavailable/)
+    expect(screen.getByText(teaId)).toBeTruthy()
+    expect(screen.getByText(sugarId)).toBeTruthy()
+    expect(screen.getByText('0.000001')).toBeTruthy()
+    failing = false
+    await user.click(screen.getByRole('button', { name: 'Retry product name' }))
+    await user.click(screen.getByRole('button', { name: 'Retry ingredient name' }))
+    expect(await screen.findByText('House tea')).toBeTruthy()
+    expect(await screen.findByText('Historical sugar')).toBeTruthy()
+    expect(urls().filter(url => url.pathname === '/api/recipes')).toHaveLength(1)
+  })
+  it('requires explicit VITE_API_BASE_URL and does not issue HTTP when it is missing', () => {
+    vi.stubEnv('VITE_API_BASE_URL', '')
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    render(<App />)
+    expect(screen.getByRole('heading', { name: 'Connect your catalog' })).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain('VITE_API_BASE_URL')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('request races and read-only safety', () => {
+  it.each(['success', 'error'])('ignores stale filter %s after the newest result arrives', async outcome => {
+    const stale = deferred<Response>()
+    const { user } = setup(url => url.pathname === '/api/ingredients' ? url.searchParams.has('search') ? page([{ ...milk, name: 'Newest result' }]) : stale.promise : undefined)
+    await user.type(screen.getByRole('searchbox'), 'Newest')
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }))
+    await screen.findByText('Newest result')
+    await act(async () => { if (outcome === 'success') stale.resolve(page([{ ...milk, name: 'Stale result' }])); else stale.reject(new Error('stale failure')) })
+    expect(screen.getByText('Newest result')).toBeTruthy()
+    expect(screen.queryByText('Stale result')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+  it('ignores a stale page response after the page size changes', async () => {
+    const stale = deferred<Response>()
+    const { user } = setup(url => url.pathname === '/api/ingredients' && url.searchParams.get('page') === '2' ? stale.promise : undefined)
+    await screen.findByRole('table')
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Rows per page' }), '10')
+    await screen.findByText('Page 1 of 5')
+    await act(async () => stale.resolve(page([{ ...milk, name: 'Stale page' }], 2, 42)))
+    expect(screen.getByText('Page 1 of 5')).toBeTruthy()
+    expect(screen.queryByText('Stale page')).toBeNull()
+  })
+  it('ignores stale details after a newer record selection or panel close', async () => {
+    const stale = deferred<Response>()
+    const { user } = setup(url => url.pathname === `/api/ingredients/${milkId}` ? stale.promise : undefined)
+    await user.click(await screen.findByRole('button', { name: 'View Oat milk' }))
+    await user.click(screen.getByRole('button', { name: 'View Historical sugar' }))
+    const details = screen.getByRole('region', { name: 'Record details' })
+    await within(details).findByRole('heading', { name: 'Historical sugar' })
+    await act(async () => stale.resolve(json({ data: milk })))
+    expect(within(details).queryByRole('heading', { name: 'Oat milk' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Close details' }))
+    expect(screen.queryByRole('region', { name: 'Record details' })).toBeNull()
+  })
+  it('ignores stale recipe reference results after changing sections', async () => {
+    const stale = deferred<Response>()
+    const { user } = setup(url => url.pathname === `/api/ingredients/${sugarId}` ? stale.promise : undefined)
+    await navigate(user, 'Recipes')
+    await navigate(user, 'Products')
+    await act(async () => stale.resolve(json({ data: { ...sugar, name: 'Stale reference' } })))
+    expect(screen.queryByText('Stale reference')).toBeNull()
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Products')
+  })
+  it('does not reopen closed details when a pending request completes', async () => {
+    const pending = deferred<Response>()
+    const { user } = setup(url => url.pathname === `/api/ingredients/${milkId}` ? pending.promise : undefined)
+    await user.click(await screen.findByRole('button', { name: 'View Oat milk' }))
+    await user.click(screen.getByRole('button', { name: 'Close details' }))
+    await act(async () => pending.resolve(json({ data: milk })))
+    expect(screen.queryByRole('region', { name: 'Record details' })).toBeNull()
+  })
+  it('only sends GET requests across all sections and details in StrictMode', async () => {
+    const { user, fetch } = setup(undefined, true)
+    await user.click(await screen.findByRole('button', { name: 'View Oat milk' }))
+    await screen.findByRole('heading', { name: 'Oat milk' })
+    await navigate(user, 'Products')
+    await user.click(screen.getByRole('button', { name: 'View House tea' }))
+    await screen.findByRole('heading', { name: 'House tea' })
+    await navigate(user, 'Recipes')
+    await user.click(screen.getByRole('button', { name: /^View recipe/ }))
+    await screen.findByRole('heading', { name: 'Recipe · L' })
+    expect(fetch.mock.calls.length).toBeGreaterThan(6)
+    expect(fetch.mock.calls.every(([, init]) => init?.method === 'GET' && init.body === undefined)).toBe(true)
+    expect(screen.queryByRole('button', { name: /create|edit|delete|activate/i })).toBeNull()
+  })
+})

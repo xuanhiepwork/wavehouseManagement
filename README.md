@@ -353,3 +353,34 @@ Ví dụ: `feature/backend-stock-import`
 | `tests/` | Thêm hoặc sửa kiểm thử | `tests/backend-stock-import` |
 | `feature/web-` | Thêm giao diện hoặc chức năng trên web | `feature/web-login-page` |
 | `feature/mobile-` | Thêm giao diện hoặc chức năng trên mobile | `feature/mobile-login-screen` |.
+
+---
+## SỬ DỤNG GITHUB
+
+### Bước 1 — Kiểm tra và cập nhật thông tin Git
+```
+git status
+git fetch origin
+```
+
+### Bước 2 — Chuyển sang nhánh test
+```
+git switch test
+```
+
+### Bước 3 — Cập nhật nhánh test từ GitHub
+```
+git pull --ff-only origin test
+```
+
+### Bước 4 — Merge code từ backend sang test
+```
+git merge backend
+```
+
+### Bước 5 — Push nhánh test lên GitHub (Sau khi merge thành công)
+```
+git push origin test
+```
+
+---
