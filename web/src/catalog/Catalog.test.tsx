@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { StrictMode } from 'react'
@@ -7,6 +7,7 @@ import { createCatalogClient } from '../api/catalog'
 import type { Ingredient, Product, Recipe } from '../api/catalog'
 import App from '../App'
 import Catalog from './Catalog'
+import { useCatalogRead } from './useCatalogRead'
 
 const milkId = '11111111-1111-1111-1111-111111111111'
 const sugarId = '22222222-2222-2222-2222-222222222222'
@@ -140,6 +141,40 @@ describe('catalog navigation and records', () => {
     expect(within(rows[1]).getByText('v9')).toBeTruthy()
     await within(rows[0]).findByText('Historical sugar')
     expect(within(rows[0]).getAllByRole('listitem')[0].textContent).toContain('Historical sugar')
+  })
+  it('reads empty historical Recipes alongside populated rows and across pages without ingredient lookups for empty records', async () => {
+    const empty: Recipe = { ...recipe, _id: '55555555-5555-5555-5555-555555555555', version: 8, ingredients: [] }
+    const older: Recipe = { ...empty, _id: '66666666-6666-6666-6666-666666666666', version: 1 }
+    const { user, fetch, urls } = setup(url => {
+      if (url.pathname === '/api/recipes') return url.searchParams.get('page') === '2' ? page([older], 2, 21) : page([empty, recipe], 1, 21)
+      if (url.pathname === `/api/recipes/${empty._id}`) return json({ data: empty })
+      if (url.pathname === `/api/recipes/${older._id}`) return json({ data: older })
+    })
+    await navigate(user, 'Recipes')
+    const rows = within(screen.getByRole('table', { name: 'Recipes catalog' })).getAllByRole('row').slice(1)
+    expect(within(rows[0]).getByText('v8')).toBeTruthy()
+    expect(within(rows[0]).queryAllByRole('listitem')).toHaveLength(0)
+    expect(within(rows[1]).getByText('v7')).toBeTruthy()
+    await within(rows[1]).findByText('Historical sugar')
+    expect(within(rows[1]).getByText('0.000001').textContent).toBe('0.000001')
+    expect(within(rows[1]).getByText('999999999999.999999').textContent).toBe('999999999999.999999')
+    const ingredientReads = () => urls().filter(url => url.pathname.startsWith('/api/ingredients/')).length
+    const readsBeforeEmptyDetail = ingredientReads()
+    await user.click(within(rows[0]).getByRole('button', { name: /^View recipe/ }))
+    const details = screen.getByRole('region', { name: 'Record details' })
+    await within(details).findByText(empty._id)
+    expect(within(details).getByRole('heading', { name: 'Ingredients & quantities' })).toBeTruthy()
+    expect(within(details).queryAllByRole('listitem')).toHaveLength(0)
+    expect(ingredientReads()).toBe(readsBeforeEmptyDetail)
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByText('Page 2 of 2')
+    expect(screen.getByText('v1')).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Record details' })).toBeNull()
+    expect(ingredientReads()).toBe(readsBeforeEmptyDetail)
+    expect(Object.fromEntries(urls().filter(url => url.pathname === '/api/recipes').at(-1)!.searchParams)).toEqual({ page: '2', limit: '20' })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('button', { name: /new recipe|activate|deactivate/i })).toBeNull()
+    expect(fetch.mock.calls.every(([, init]) => init?.method === 'GET' && init.body === undefined)).toBe(true)
   })
 })
 
@@ -341,5 +376,76 @@ describe('request races and read-only safety', () => {
     expect(fetch.mock.calls.length).toBeGreaterThan(6)
     expect(fetch.mock.calls.every(([, init]) => init?.method === 'GET' && init.body === undefined)).toBe(true)
     expect(screen.queryByRole('button', { name: /create|edit|delete|activate/i })).toBeNull()
+  })
+})
+
+describe('reusable Catalog read state', () => {
+  it.each(['success', 'error'])('ignores stale %s when the loader changes', async outcome => {
+    const stale = deferred<string>()
+    const oldLoad = vi.fn(() => stale.promise)
+    const nextLoad = vi.fn(async () => 'Newest result')
+    const { result, rerender } = renderHook(({ load }) => useCatalogRead(load), { initialProps: { load: oldLoad } })
+    await waitFor(() => expect(oldLoad).toHaveBeenCalledTimes(1))
+    rerender({ load: nextLoad })
+    expect(result.current.loading).toBe(true)
+    expect(result.current.data).toBeUndefined()
+    await waitFor(() => expect(result.current.data).toBe('Newest result'))
+    await act(async () => {
+      if (outcome === 'success') stale.resolve('Stale result')
+      else stale.reject(new Error('private stale failure'))
+    })
+    expect(result.current).toMatchObject({ data: 'Newest result', error: undefined, loading: false })
+    expect(nextLoad).toHaveBeenCalledTimes(1)
+  })
+  it('hides the current result on retry and ignores a superseded retry attempt', async () => {
+    const stale = deferred<string>()
+    const newest = deferred<string>()
+    const load = vi.fn<() => Promise<string>>()
+      .mockResolvedValueOnce('Existing result')
+      .mockImplementationOnce(() => stale.promise)
+      .mockImplementationOnce(() => newest.promise)
+    const { result } = renderHook(() => useCatalogRead(load))
+    await waitFor(() => expect(result.current.data).toBe('Existing result'))
+    act(() => result.current.retry())
+    expect(result.current).toMatchObject({ data: undefined, error: undefined, loading: true })
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+    act(() => result.current.retry())
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(3))
+    await act(async () => newest.resolve('Newest retry'))
+    expect(result.current.data).toBe('Newest retry')
+    await act(async () => stale.resolve('Superseded retry'))
+    expect(result.current).toMatchObject({ data: 'Newest retry', error: undefined, loading: false })
+    expect(load).toHaveBeenCalledTimes(3)
+  })
+  it('sanitizes synchronous loader failures and retries only after explicit action', async () => {
+    const load = vi.fn<() => Promise<string>>()
+      .mockImplementationOnce(() => { throw new Error('database password SECRET') })
+      .mockResolvedValueOnce('Recovered result')
+    const { result, rerender } = renderHook(() => useCatalogRead(load))
+    await waitFor(() => expect(result.current.error).toBe('The catalog could not be loaded. Please try again.'))
+    expect(result.current).toMatchObject({ data: undefined, loading: false })
+    rerender()
+    await act(async () => { await Promise.resolve() })
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(result.current.error).not.toContain('SECRET')
+    act(() => result.current.retry())
+    expect(result.current.error).toBeUndefined()
+    expect(result.current.loading).toBe(true)
+    await waitFor(() => expect(result.current.data).toBe('Recovered result'))
+    expect(load).toHaveBeenCalledTimes(2)
+  })
+  it.each(['success', 'error'])('ignores pending %s after unmount without starting another request', async outcome => {
+    const pending = deferred<string>()
+    const load = vi.fn(() => pending.promise)
+    const { result, unmount } = renderHook(() => useCatalogRead(load))
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(1))
+    const stateBeforeUnmount = result.current
+    unmount()
+    await act(async () => {
+      if (outcome === 'success') pending.resolve('Unmounted result')
+      else pending.reject(new Error('Unmounted failure'))
+    })
+    expect(result.current).toBe(stateBeforeUnmount)
+    expect(load).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { CatalogApiError } from '../api/catalog'
 import type { CatalogClient, Ingredient, IngredientQuery, PageEnvelope, Product, ProductSize, Recipe, BaseUnit } from '../api/catalog'
 import CatalogCreation from './CatalogCreation'
 import { useCatalogCreation } from './useCatalogCreation'
 import type { CatalogCreationModel, CreationClient } from './useCatalogCreation'
+import { useCatalogRead } from './useCatalogRead'
 import './Catalog.css'
 
 // Recipe views only receive reads. Creation capabilities are limited to Ingredients and Products.
@@ -18,27 +18,6 @@ const descriptions: Record<Section, string> = {
   ingredients: 'Explore the ingredients behind every recipe.',
   products: 'Browse your product range and size prices.',
   recipes: 'Explore recipe versions and their ingredients.',
-}
-function safeMessage(error: unknown) {
-  return error instanceof CatalogApiError ? error.message : 'The catalog could not be loaded. Please try again.'
-}
-
-/** Ignore superseded and unmounted requests, including failures; hide data for other keys. */
-function useRead<T>(load: () => Promise<T>) {
-  const [attempt, setAttempt] = useState(0)
-  const key = useMemo(() => ({ load, attempt }), [load, attempt])
-  const [result, setResult] = useState<{ key: typeof key; data?: T; error?: string }>()
-  useEffect(() => {
-    let current = true
-    void Promise.resolve().then(load).then(
-      data => { if (current) setResult({ key, data }) },
-      error => { if (current) setResult({ key, error: safeMessage(error) }) },
-    )
-    return () => { current = false }
-  }, [load, key])
-  return { data: result?.key === key ? result.data : undefined,
-    error: result?.key === key ? result.error : undefined,
-    loading: result?.key !== key, retry: () => setAttempt(value => value + 1) }
 }
 function ErrorState({ message, retry }: { message: string; retry: () => void }) {
   return <div className="feedback error-state" role="alert"><strong>Unable to load</strong><p>{message}</p><button type="button" onClick={retry}>Retry</button></div>
@@ -72,7 +51,7 @@ function referenceReader(client: ReadClient) {
 type ReferenceReader = ReturnType<typeof referenceReader>
 function Reference({ id, kind, reader }: { id: string; kind: 'product' | 'ingredient'; reader: ReferenceReader }) {
   const load = useCallback((): Promise<Product | Ingredient> => reader[kind](id), [reader, kind, id])
-  const state = useRead(load)
+  const state = useCatalogRead(load)
   return <span className="reference">
     {state.loading && <span role="status">Loading {kind}…</span>}
     {state.error && <span><span role="alert">Name unavailable. {state.error}</span> <button className="text-button" type="button" onClick={state.retry}>Retry {kind} name</button></span>}
@@ -139,7 +118,7 @@ function RecordDetails({ item, reader }: { item: RecordItem; reader: ReferenceRe
 }
 function DetailPanel({ client, section, id, reader, close }: { client: ReadClient; section: Section; id: string; reader: ReferenceReader; close: () => void }) {
   const load = useCallback(async (): Promise<RecordItem> => (await client[section].detail(id)).data, [client, section, id])
-  const state = useRead(load)
+  const state = useCatalogRead(load)
   const focusHeading = useCallback((node: HTMLHeadingElement | null) => { node?.focus() }, [])
   return <section className="detail-panel surface" aria-label="Record details"><div className="panel-heading"><h2 tabIndex={-1} ref={focusHeading}>Record details</h2><button type="button" onClick={close} aria-label="Close details">Close</button></div>
     {state.loading && <p className="feedback" role="status">Loading details…</p>}{state.error && <ErrorState message={state.error} retry={state.retry} />}{state.data && <RecordDetails item={state.data} reader={reader} />}
@@ -167,7 +146,7 @@ function Workspace({ section, client, creation }: { section: Section; client: Wo
     else result = await client.recipes.list({ ...paging, productId: filters.productId.trim() || undefined, size: (filters.size || undefined) as ProductSize | undefined, isActive: active })
     return { ...result, reader: referenceReader(client) }
   }, [client, section, filters, page, limit])
-  const state = useRead(load)
+  const state = useCatalogRead(load)
   const data = state.data
   const reader = data?.reader
   function select(id: string, button: HTMLButtonElement) { selectionButton.current = button; setSelected(id) }

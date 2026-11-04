@@ -32,11 +32,14 @@ const product: Guard<Product> = (v): v is Product => object(v) && common(v)
   && typeof v.isAvailable === 'boolean' && Array.isArray(v.prices) && v.prices.length > 0 && v.prices.length <= 3
   && v.prices.every(p => object(p) && size(p.size) && decimal(p.price, 4))
   && new Set(v.prices.map(p => p.size)).size === v.prices.length
-const recipe: Guard<Recipe> = (v): v is Recipe => object(v) && metadata(v) && uuid(v.productId) && size(v.size)
+// Historical GET responses may contain an empty Recipe; new versions still require Ingredients.
+const recipeRead: Guard<Recipe> = (v): v is Recipe => object(v) && metadata(v) && uuid(v.productId) && size(v.size)
   && integer(v.version) && v.version > 0 && typeof v.isActive === 'boolean'
-  && Array.isArray(v.ingredients) && v.ingredients.length > 0
+  && Array.isArray(v.ingredients)
   && v.ingredients.every(i => object(i) && uuid(i.ingredientId) && decimal(i.quantity, 6) && i.quantity !== '0')
   && new Set(v.ingredients.map(i => i.ingredientId)).size === v.ingredients.length
+// Preserve existing mutation response validation independently of historical read compatibility.
+const recipe: Guard<Recipe> = (v): v is Recipe => recipeRead(v) && v.ingredients.length > 0
 
 function envelope<T>(guard: Guard<T>, listing: boolean, value: unknown): boolean {
   if (!object(value)) return false
@@ -171,8 +174,8 @@ export function createCatalogClient(options: CatalogClientOptions = {}) {
     ingredients: resource<Ingredient, IngredientInput, IngredientQuery>('ingredients', ingredient),
     products: resource<Product, ProductInput, ProductQuery>('products', product),
     recipes: {
-      list: (query: RecipeQuery = {}) => request(`/recipes${queryString(query)}`, 'GET', recipe, true),
-      detail: (id: UUID) => request(`/recipes/${idPath(id)}`, 'GET', recipe),
+      list: (query: RecipeQuery = {}) => request(`/recipes${queryString(query)}`, 'GET', recipeRead, true),
+      detail: (id: UUID) => request(`/recipes/${idPath(id)}`, 'GET', recipeRead),
       create: (input: RecipeInput) => {
         checkPayload(input, 'recipes')
         return request('/recipes', 'POST', recipe, false, input)

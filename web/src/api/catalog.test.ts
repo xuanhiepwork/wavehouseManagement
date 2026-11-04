@@ -214,6 +214,83 @@ describe('response and payload validation', () => {
   })
 })
 
+describe('historical Recipe read compatibility', () => {
+  const emptyRecipe: Recipe = { ...recipe, version: 3, ingredients: [] }
+
+  it.each(['detail', 'list'] as const)('accepts an empty historical Recipe via %s using GET only', async operation => {
+    const response = operation === 'list' ? { data: [emptyRecipe], pagination } : { data: emptyRecipe }
+    const { client, fetch } = setup(response)
+    const result = operation === 'list' ? await client.recipes.list() : await client.recipes.detail(id)
+    expect(result).toEqual(response)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch.mock.calls[0][1]).toMatchObject({ method: 'GET' })
+    expect(fetch.mock.calls[0][1]?.body).toBeUndefined()
+  })
+
+  it('preserves mixed empty/populated Recipe order, exact quantities, pagination and false filters', async () => {
+    const populated = { ...recipe, _id: otherId }
+    const response = { data: [emptyRecipe, populated], pagination: { page: 2, limit: 2, total: 5, totalPages: 3 } }
+    const { client, fetch } = setup(response)
+    const result = await client.recipes.list({ productId: recipe.productId, size: 'L', isActive: false, page: 2, limit: 2 })
+    expect(result).toEqual(response)
+    expect(result.data[1].ingredients.map(item => item.quantity)).toEqual(['0.000001', '999999999999.999999'])
+    expect(Object.fromEntries(new URL(String(fetch.mock.calls[0][0])).searchParams)).toEqual({
+      productId: recipe.productId, size: 'L', isActive: 'false', page: '2', limit: '2',
+    })
+    expect(fetch.mock.calls.every(([, init]) => init?.method === 'GET' && init.body === undefined)).toBe(true)
+  })
+
+  it.each([
+    { _id: '507f1f77bcf86cd799439011' },
+    { productId: { _id: otherId } },
+    { productId: 'not-a-uuid' },
+    { size: 'XL' },
+    { version: 0 },
+    { version: -1 },
+    { version: 1.5 },
+    { version: '1' },
+    { createdAt: 'yesterday' },
+    { updatedAt: undefined },
+    { isActive: 'false' },
+    { __v: 0 },
+    { ingredients: undefined },
+    { ingredients: null },
+    { ingredients: {} },
+    { ingredients: [null] },
+    { ingredients: [{ ingredientId: 'not-a-uuid', quantity: '1' }] },
+    { ingredients: [{ ingredientId: { _id: id }, quantity: '1' }] },
+    { ingredients: [{ ingredientId: id, quantity: 1 }] },
+    { ingredients: [{ ingredientId: id, quantity: '0' }] },
+    { ingredients: [{ ingredientId: id, quantity: '1.0' }] },
+    { ingredients: [{ ingredientId: id, quantity: '0.0000001' }] },
+    { ingredients: [{ ingredientId: id, quantity: '1000000000000' }] },
+    { ingredients: [recipe.ingredients[0], recipe.ingredients[0]] },
+  ])('continues rejecting malformed Recipe metadata or members %#', async override => {
+    const { client } = setup({ data: { ...emptyRecipe, ...override } })
+    await expect(client.recipes.detail(id)).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE', status: 200 })
+  })
+
+  it('rejects a malformed list record instead of dropping it beside a valid empty Recipe', async () => {
+    const { client } = setup({ data: [emptyRecipe, { ...recipe, productId: null }], pagination: { ...pagination, total: 2 } })
+    await expect(client.recipes.list()).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
+  })
+
+  it('still reports backend rejection of empty creation without changing its payload or retrying', async () => {
+    const input: RecipeInput = { ...recipeInput, ingredients: [] }
+    const { client, fetch } = setup({ error: 'Invalid request' }, 400)
+    await expect(client.recipes.create(input)).rejects.toMatchObject({ code: 'BAD_REQUEST', status: 400 })
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch.mock.calls[0][1]).toMatchObject({ method: 'POST', body: JSON.stringify(input) })
+  })
+
+  it.each(['create', 'activate', 'deactivate'] as const)('preserves the existing nonempty %s response guard', async operation => {
+    const { client, fetch } = setup({ data: emptyRecipe })
+    const response = operation === 'create' ? client.recipes.create(recipeInput) : client.recipes[operation](id)
+    await expect(response).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('safe errors and single-attempt requests', () => {
   it.each([[400, 'BAD_REQUEST'], [404, 'NOT_FOUND'], [409, 'CONFLICT'], [500, 'SERVER_ERROR'], [503, 'SERVER_ERROR'], [401, 'HTTP_ERROR']])('normalizes status %s without exposing internals', async (status, code) => {
     const secret = 'postgresql://user:password@localhost/private SELECT * FROM secrets'
