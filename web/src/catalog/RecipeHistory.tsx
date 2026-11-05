@@ -116,14 +116,18 @@ function HistoryReads({ client, productId, size, onViewRecipe, lifecycle, manage
 }) {
   const [page, setPage] = useState(1)
   const [revision, setRevision] = useState(0)
-  // Refresh remounts read state and its reference cache while retaining this context's page.
-  return <HistoryPage key={revision} client={client} productId={productId} size={size} page={page} onPageChange={setPage}
-    onRefresh={() => setRevision(value => value + 1)} onViewRecipe={onViewRecipe} lifecycle={lifecycle} managementShown={managementShown} />
+  // Keep the focused refresh control mounted while replacing read state and its reference cache.
+  return <>
+    <div className="history-read-heading"><h3>History for size {size}</h3>
+      <button type="button" disabled={lifecycle?.locked} onClick={() => setRevision(value => value + 1)}>Refresh history and active version</button></div>
+    <HistoryPage key={revision} client={client} productId={productId} size={size} page={page} onPageChange={setPage}
+      onViewRecipe={onViewRecipe} lifecycle={lifecycle} managementShown={managementShown} />
+  </>
 }
 
-function HistoryPage({ client, productId, size, page, onPageChange, onRefresh, onViewRecipe, lifecycle, managementShown }: {
+function HistoryPage({ client, productId, size, page, onPageChange, onViewRecipe, lifecycle, managementShown }: {
   client: HistoryClient; productId: string; size: ProductSize; page: number
-  onPageChange: (page: number) => void; onRefresh: () => void
+  onPageChange: (page: number) => void
   onViewRecipe: (id: string, button: HTMLButtonElement) => void
   lifecycle?: RecipeLifecycleModel; managementShown: boolean
 }) {
@@ -161,8 +165,6 @@ function HistoryPage({ client, productId, size, page, onPageChange, onRefresh, o
   const activeValidated = !!(currentActive && rows && !history.loading && !history.error && !active.loading && !active.error && !conflicting)
   const confirmedReadWarning = lifecycle?.confirmed ? ' The operation was confirmed; displayed data may be outdated. Retry reads only.' : ''
   return <>
-    <div className="history-read-heading"><h3>History for size {size}</h3>
-      <button type="button" disabled={lifecycle?.locked} onClick={onRefresh}>Refresh history and active version</button></div>
     {conflicting && <p className="history-reference-warning" role="alert">History and active-version reads disagree. Server state may have changed between reads. Current active status cannot be confirmed across these reads; refresh history and active version.</p>}
     <section className="history-active" aria-label="Current active Recipe" aria-busy={active.loading}>
       <h3>Current active version</h3>
@@ -239,7 +241,7 @@ function LifecycleConfirmation({ lifecycle, onRefresh }: { lifecycle: RecipeLife
   const heading = useRef<HTMLHeadingElement>(null)
   const { visible, phase, selection, snapshot } = lifecycle
   useEffect(() => {
-    if (visible && ['ready', 'blocked', 'uncertain', 'reconciled', 'rejected', 'confirmed'].includes(phase)) heading.current?.focus()
+    if (visible && ['checking', 'ready', 'blocked', 'uncertain', 'reconciled', 'rejected', 'confirmed'].includes(phase)) heading.current?.focus()
   }, [visible, phase])
   if (!visible || !selection) return null
   const target = snapshot?.target ?? selection.target

@@ -283,11 +283,59 @@ describe('historical Recipe read compatibility', () => {
     expect(fetch.mock.calls[0][1]).toMatchObject({ method: 'POST', body: JSON.stringify(input) })
   })
 
-  it.each(['create', 'activate', 'deactivate'] as const)('preserves the existing nonempty %s response guard', async operation => {
+  it.each(['create', 'activate'] as const)('preserves the existing nonempty %s response guard', async operation => {
     const { client, fetch } = setup({ data: emptyRecipe })
     const response = operation === 'create' ? client.recipes.create(recipeInput) : client.recipes[operation](id)
     await expect(response).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
     expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('accepts an empty historical Recipe after one bodyless, queryless deactivation POST', async () => {
+    const response = { data: emptyRecipe }
+    const { client, fetch } = setup(response)
+    expect(await client.recipes.deactivate(id)).toEqual(response)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const [url, init] = fetch.mock.calls[0]
+    expect(url).toBe(`http://127.0.0.1:5000/api/recipes/${id}/deactivate`)
+    expect(init).toMatchObject({ method: 'POST', headers: { Accept: 'application/json' } })
+    expect(init?.body).toBeUndefined()
+    expect(init?.headers).not.toHaveProperty('Content-Type')
+  })
+
+  it.each([
+    ['invalid Recipe UUID', { _id: '507f1f77bcf86cd799439011' }],
+    ['missing Recipe UUID', { _id: undefined }],
+    ['populated Product reference', { productId: { _id: otherId } }],
+    ['invalid Product UUID', { productId: 'not-a-uuid' }],
+    ['unsupported size', { size: 'XL' }],
+    ['zero version', { version: 0 }],
+    ['fractional version', { version: 1.5 }],
+    ['unsafe version', { version: Number.MAX_SAFE_INTEGER + 1 }],
+    ['string version', { version: '3' }],
+    ['invalid creation timestamp', { createdAt: 'yesterday' }],
+    ['missing update timestamp', { updatedAt: undefined }],
+    ['string active status', { isActive: 'false' }],
+    ['legacy Mongo metadata', { __v: 0 }],
+    ['missing membership', { ingredients: undefined }],
+    ['null membership', { ingredients: null }],
+    ['object membership', { ingredients: {} }],
+    ['null member', { ingredients: [null] }],
+    ['invalid Ingredient UUID', { ingredients: [{ ingredientId: 'not-a-uuid', quantity: '1' }] }],
+    ['populated Ingredient reference', { ingredients: [{ ingredientId: { _id: id }, quantity: '1' }] }],
+    ['numeric quantity', { ingredients: [{ ingredientId: id, quantity: 1 }] }],
+    ['zero quantity', { ingredients: [{ ingredientId: id, quantity: '0' }] }],
+    ['negative quantity', { ingredients: [{ ingredientId: id, quantity: '-1' }] }],
+    ['exponent quantity', { ingredients: [{ ingredientId: id, quantity: '1e3' }] }],
+    ['noncanonical quantity', { ingredients: [{ ingredientId: id, quantity: '1.0' }] }],
+    ['excess quantity scale', { ingredients: [{ ingredientId: id, quantity: '0.0000001' }] }],
+    ['excess quantity precision', { ingredients: [{ ingredientId: id, quantity: '1000000000000' }] }],
+    ['duplicate Ingredient membership', { ingredients: [recipe.ingredients[0], recipe.ingredients[0]] }],
+  ] as const)('rejects %s in deactivation responses without retrying', async (_, override) => {
+    const { client, fetch } = setup({ data: { ...emptyRecipe, ...override } })
+    await expect(client.recipes.deactivate(id)).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE', status: 200 })
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch.mock.calls[0][1]?.method).toBe('POST')
+    expect(fetch.mock.calls[0][1]?.body).toBeUndefined()
   })
 })
 

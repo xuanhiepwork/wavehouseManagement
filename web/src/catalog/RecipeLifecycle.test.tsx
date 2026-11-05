@@ -1943,18 +1943,22 @@ describe('Recipe activation and deactivation', () => {
     expect(actionPosts()).toHaveLength(1)
   })
 
-  it('reconciles empty-membership deactivation safely when the existing mutation parser cannot confirm its response', async () => {
+  it('confirms valid empty-membership deactivation without a false uncertain outcome', async () => {
     const target = lifecycleVersion(3, { isActive: true, ingredients: [] })
     const { user, server, actionPosts, fetch } = recipeActionSetup([target])
     const { dialog } = await recipeActionOpen(user, target, 'deactivate')
     await waitFor(() => expect(recipeActionConfirm(dialog, 'deactivate')).toHaveProperty('disabled', false))
     await user.click(recipeActionConfirm(dialog, 'deactivate'))
-    await within(dialog).findByText(/lifecycle outcome is unknown/i)
+    await within(dialog).findByText(/Recipe deactivation was confirmed\. Server reads have been refreshed/)
+    expect(within(dialog).queryByText(/lifecycle outcome is unknown/i)).toBeNull()
+    expect(within(dialog).getByText(/operation was confirmed by the server/i)).toBeTruthy()
     expect(server.rows[0].isActive).toBe(false)
     expect(actionPosts()).toHaveLength(1)
+    expect(recipeActionConfirm(dialog, 'deactivate')).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'New recipe' })).toHaveProperty('disabled', false)
     const before = fetch.mock.calls.length
     await user.click(within(dialog).getByRole('button', { name: 'Refresh server state' }))
-    await within(dialog).findByText(/Server state was observed after refresh/)
+    await within(dialog).findByText(/The operation was confirmed\. Server reads have been refreshed/)
     expect(dialog.textContent).toContain('No active Recipe')
     expect(fetch.mock.calls.slice(before).every(([, init]) => init?.method === 'GET')).toBe(true)
     expect(actionPosts()).toHaveLength(1)
@@ -1968,5 +1972,96 @@ describe('Recipe activation and deactivation', () => {
     unmount()
     await act(async () => pending.resolve(refJson({ data: target })))
     expect(actionPosts()).toHaveLength(0)
+  })
+
+  it('retains confirmed empty-membership deactivation when a subsequent GET fails and retries reads only', async () => {
+    const target = lifecycleVersion(3, { isActive: true, ingredients: [] })
+    let failedRefresh = false
+    const { user, server, actionPosts, fetch } = recipeActionSetup([target], (url, init) => {
+      if (init.method === 'POST') { failedRefresh = true; return }
+      if (failedRefresh && init.method === 'GET' && url.pathname === `/api/recipes/${target._id}`) return refJson({ error: 'Refresh unavailable' }, 500)
+    })
+    const { dialog } = await recipeActionOpen(user, target, 'deactivate')
+    await waitFor(() => expect(recipeActionConfirm(dialog, 'deactivate')).toHaveProperty('disabled', false))
+    await user.click(recipeActionConfirm(dialog, 'deactivate'))
+    await within(dialog).findByText(/operation was confirmed, but displayed data may be outdated/i)
+    expect(within(dialog).getByText(/operation was confirmed by the server/i)).toBeTruthy()
+    expect(within(dialog).queryByText(/lifecycle outcome is unknown/i)).toBeNull()
+    expect(server.rows[0].isActive).toBe(false)
+    expect(actionPosts()).toHaveLength(1)
+    expect(recipeActionConfirm(dialog, 'deactivate')).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'New recipe' })).toHaveProperty('disabled', false)
+    const before = fetch.mock.calls.length
+    failedRefresh = false
+    await user.click(within(dialog).getByRole('button', { name: 'Refresh server state' }))
+    await within(dialog).findByText(/The operation was confirmed\. Server reads have been refreshed/)
+    expect(dialog.textContent).toContain('No active Recipe')
+    expect(fetch.mock.calls.slice(before).every(([, init]) => init?.method === 'GET')).toBe(true)
+    expect(actionPosts()).toHaveLength(1)
+  })
+
+  it.each(['invalid-timestamp', 'unexpected-active-status'])(
+    'preserves an uncertain empty-membership deactivation with %s and reconciles without a mutation retry', async failure => {
+      const target = lifecycleVersion(3, { isActive: true, ingredients: [] })
+      const { user, server, actionPosts, fetch } = recipeActionSetup([target], (_url, init, state) => {
+        if (init.method !== 'POST') return
+        state.rows = state.rows.map(row => ({ ...row, isActive: false }))
+        const applied = state.rows[0]
+        return refJson({ data: { ...applied, ...(failure === 'invalid-timestamp' ? { updatedAt: 'not-a-timestamp' } : { isActive: true }) } })
+      })
+      const { dialog } = await recipeActionOpen(user, target, 'deactivate')
+      await waitFor(() => expect(recipeActionConfirm(dialog, 'deactivate')).toHaveProperty('disabled', false))
+      await user.click(recipeActionConfirm(dialog, 'deactivate'))
+      await within(dialog).findByText(/lifecycle outcome is unknown/i)
+      expect(dialog.textContent).toContain(target._id)
+      expect(dialog.textContent).toContain('Deactivate version 3')
+      expect(within(dialog).queryByText(/operation was confirmed by the server/i)).toBeNull()
+      expect(recipeActionConfirm(dialog, 'deactivate')).toHaveProperty('disabled', true)
+      expect(screen.getByRole('button', { name: 'New recipe' })).toHaveProperty('disabled', true)
+      expect(server.rows[0].isActive).toBe(false)
+      expect(actionPosts()).toHaveLength(1)
+      fireEvent.click(recipeActionConfirm(dialog, 'deactivate'))
+      expect(actionPosts()).toHaveLength(1)
+      const before = fetch.mock.calls.length
+      await user.click(within(dialog).getByRole('button', { name: 'Refresh server state' }))
+      await within(dialog).findByText(/Server state was observed after refresh/)
+      expect(dialog.textContent).toContain('No active Recipe')
+      expect(fetch.mock.calls.slice(before).every(([, init]) => init?.method === 'GET')).toBe(true)
+      expect(actionPosts()).toHaveLength(1)
+    })
+})
+
+describe('Recipe asynchronous accessibility focus', () => {
+  it('focuses lifecycle review immediately while target preflight is still loading', async () => {
+    const target = lifecycleVersion(3), pending = refDeferred<Response>()
+    const { user, actionPosts } = recipeActionSetup([target], (url, init) => init.method === 'GET'
+      && url.pathname === `/api/recipes/${target._id}` ? pending.promise : undefined)
+    const { dialog } = await recipeActionOpen(user, target)
+    try {
+      expect(dialog.getAttribute('aria-busy')).toBe('true')
+      expect(within(dialog).getByRole('status').textContent).toContain('Reading current server state')
+      expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', true)
+      expect(document.activeElement).toBe(within(dialog).getByRole('heading', { name: 'Review Recipe activation' }))
+    } finally {
+      await act(async () => pending.resolve(refJson({ data: target })))
+    }
+    expect(actionPosts()).toHaveLength(0)
+  })
+
+  it('keeps keyboard focus in history after Enter refreshes history and the active version', async () => {
+    const { user, fetch } = historySetup([refRecipe])
+    const { panel } = await historyOpen(user, refRecipe)
+    await within(panel).findByLabelText('History version 3')
+    const refresh = within(panel).getByRole('button', { name: 'Refresh history and active version' })
+    refresh.focus()
+    expect(document.activeElement).toBe(refresh)
+    await user.keyboard('{Enter}')
+    await within(panel).findByLabelText('History version 3')
+    expect([
+      within(panel).getByRole('button', { name: 'Refresh history and active version' }),
+      within(panel).getByRole('heading', { name: 'Recipe version history' }),
+      within(panel).getByRole('heading', { name: 'History for size S' }),
+    ]).toContain(document.activeElement)
+    expect(fetch.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true)
   })
 })

@@ -32,13 +32,13 @@ const product: Guard<Product> = (v): v is Product => object(v) && common(v)
   && typeof v.isAvailable === 'boolean' && Array.isArray(v.prices) && v.prices.length > 0 && v.prices.length <= 3
   && v.prices.every(p => object(p) && size(p.size) && decimal(p.price, 4))
   && new Set(v.prices.map(p => p.size)).size === v.prices.length
-// Historical GET responses may contain an empty Recipe; new versions still require Ingredients.
+// Historical reads and deactivation may return an empty Recipe; creation and activation require Ingredients.
 const recipeRead: Guard<Recipe> = (v): v is Recipe => object(v) && metadata(v) && uuid(v.productId) && size(v.size)
   && integer(v.version) && v.version > 0 && typeof v.isActive === 'boolean'
   && Array.isArray(v.ingredients)
   && v.ingredients.every(i => object(i) && uuid(i.ingredientId) && decimal(i.quantity, 6) && i.quantity !== '0')
   && new Set(v.ingredients.map(i => i.ingredientId)).size === v.ingredients.length
-// Preserve existing mutation response validation independently of historical read compatibility.
+// Creation and activation keep their nonempty response validation.
 const recipe: Guard<Recipe> = (v): v is Recipe => recipeRead(v) && v.ingredients.length > 0
 
 function envelope<T>(guard: Guard<T>, listing: boolean, value: unknown): boolean {
@@ -181,7 +181,7 @@ export function createCatalogClient(options: CatalogClientOptions = {}) {
         return request('/recipes', 'POST', recipe, false, input)
       },
       activate: (id: UUID) => request(`/recipes/${idPath(id)}/activate`, 'POST', recipe),
-      deactivate: (id: UUID) => request(`/recipes/${idPath(id)}/deactivate`, 'POST', recipe),
+      deactivate: (id: UUID) => request(`/recipes/${idPath(id)}/deactivate`, 'POST', recipeRead),
     },
   }
 }
