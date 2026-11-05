@@ -1357,3 +1357,616 @@ describe('Recipe version history', () => {
     expect(fetch.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true)
   })
 })
+
+interface RecipeActionServer {
+  rows: Recipe[]
+  product: Product
+  ingredients: Ingredient[]
+}
+type RecipeActionHandler = (url: URL, init: RequestInit, server: RecipeActionServer) => Response | Promise<Response> | undefined
+function recipeActionSetup(rows: Recipe[], handler?: RecipeActionHandler, timeoutMs = 5_000) {
+  const server: RecipeActionServer = { rows: rows.map(row => ({ ...row, ingredients: row.ingredients.map(item => ({ ...item })) })),
+    product: { ...refProduct }, ingredients: [{ ...refIngredient }, { ...refOther }] }
+  const setup = lifecycleSetup((url, init) => {
+    const override = handler?.(url, init, server)
+    if (override !== undefined) return override
+    if (init.method === 'GET') {
+      if (url.pathname === '/api/products') return lifecycleHistoryProducts(server.product, url)
+      if (url.pathname === `/api/products/${refProductId}`) return refJson({ data: server.product })
+      const ingredient = server.ingredients.find(row => url.pathname === `/api/ingredients/${row._id}`)
+      if (ingredient) return refJson({ data: ingredient })
+      if (url.pathname === '/api/recipes') {
+        const matches = server.rows.filter(row => (!url.searchParams.has('productId') || row.productId === url.searchParams.get('productId'))
+          && (!url.searchParams.has('size') || row.size === url.searchParams.get('size'))
+          && (!url.searchParams.has('isActive') || String(row.isActive) === url.searchParams.get('isActive')))
+        return lifecycleHistory(matches, url)
+      }
+      const recipe = server.rows.find(row => url.pathname === `/api/recipes/${row._id}`)
+      if (recipe) return refJson({ data: recipe })
+    }
+    if (init.method === 'POST') {
+      const match = /^\/api\/recipes\/([^/]+)\/(activate|deactivate)$/.exec(url.pathname)
+      if (match) {
+        const target = server.rows.find(row => row._id === match[1])
+        if (!target) return refJson({ error: 'Not found' }, 404)
+        server.rows = server.rows.map(row => {
+          if (row._id === target._id) return { ...row, isActive: match[2] === 'activate', updatedAt: '2026-11-05T01:00:00.000Z' }
+          if (match[2] === 'activate' && row.productId === target.productId && row.size === target.size) return { ...row, isActive: false }
+          return row
+        })
+        return refJson({ data: server.rows.find(row => row._id === target._id) })
+      }
+    }
+  }, timeoutMs)
+  return { ...setup, server, actionPosts: () => setup.fetch.mock.calls.filter(([input, init]) => init?.method === 'POST'
+    && /\/(?:activate|deactivate)$/.test(new URL(String(input)).pathname)) }
+}
+function lifecycleHistoryProducts(product: Product, url: URL) {
+  return refPage([product], +(url.searchParams.get('page') ?? '1'), 1, +(url.searchParams.get('limit') ?? '20'))
+}
+async function recipeActionOpen(user: ReturnType<typeof userEvent.setup>, recipe: Recipe, action: 'activate' | 'deactivate' = 'activate') {
+  const { panel } = await historyOpen(user, recipe)
+  await within(panel).findByLabelText(`History version ${recipe.version}`)
+  await user.click(within(panel).getByRole('button', { name: 'Show Recipe lifecycle controls' }))
+  const opener = within(panel).getByRole('button', { name: `${action === 'activate' ? 'Activate' : 'Deactivate'} version ${recipe.version}` })
+  await user.click(opener)
+  const dialog = await screen.findByRole('dialog', { name: 'Recipe lifecycle confirmation' })
+  return { panel, opener, dialog }
+}
+function recipeActionConfirm(dialog: HTMLElement, action: 'activate' | 'deactivate' = 'activate') {
+  return within(dialog).getByRole('button', { name: action === 'activate' ? 'Confirm activation' : 'Confirm deactivation' })
+}
+
+describe('Recipe activation and deactivation', () => {
+  it('activates an eligible inactive Recipe with the exact bodyless, queryless endpoint after explicit confirmation', async () => {
+    const target = lifecycleVersion(3)
+    const { user, server, actionPosts, gets } = recipeActionSetup([target])
+    const { panel, dialog } = await recipeActionOpen(user, target)
+    await waitFor(() => expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false))
+    expect(dialog.textContent).toContain(target._id)
+    expect(dialog.textContent).toContain(refProductId)
+    expect(dialog.textContent).toContain('Picker tea')
+    expect(dialog.textContent).toMatch(/version 3|v3/i)
+    expect(dialog.textContent).toMatch(/no active/i)
+    expect(actionPosts()).toHaveLength(0)
+    const before = gets().length
+    await user.click(recipeActionConfirm(dialog))
+    await waitFor(() => expect(actionPosts()).toHaveLength(1))
+    const [input, init] = actionPosts()[0]
+    expect(String(input)).toBe(`http://127.0.0.1:5000/api/recipes/${target._id}/activate`)
+    expect(init?.body).toBeUndefined()
+    expect(init?.headers).not.toHaveProperty('Content-Type')
+    expect(server.rows[0].isActive).toBe(true)
+    expect(server.rows[0].version).toBe(target.version)
+    expect(server.rows[0].ingredients).toEqual(target.ingredients)
+    await waitFor(() => expect(within(panel).getByLabelText('History version 3').textContent).toContain('Current active version'))
+    expect(gets().slice(before).some(url => url.pathname === `/api/recipes/${target._id}`)).toBe(true)
+    expect(gets().slice(before).some(isHistoryRead)).toBe(true)
+    expect(gets().slice(before).some(isActiveHistoryRead)).toBe(true)
+  })
+
+  it('deactivates the current active Recipe without changing immutable version contents', async () => {
+    const target = lifecycleVersion(3, { isActive: true })
+    const { user, server, actionPosts } = recipeActionSetup([target, lifecycleVersion(8)])
+    const { panel, dialog } = await recipeActionOpen(user, target, 'deactivate')
+    await waitFor(() => expect(recipeActionConfirm(dialog, 'deactivate')).toHaveProperty('disabled', false))
+    expect(dialog.textContent).toMatch(/clear|no active/i)
+    expect(actionPosts()).toHaveLength(0)
+    await user.click(recipeActionConfirm(dialog, 'deactivate'))
+    await waitFor(() => expect(actionPosts()).toHaveLength(1))
+    const [input, init] = actionPosts()[0]
+    expect(String(input)).toBe(`http://127.0.0.1:5000/api/recipes/${target._id}/deactivate`)
+    expect(init?.body).toBeUndefined()
+    expect(server.rows.find(row => row._id === target._id)?.ingredients).toEqual(target.ingredients)
+    expect(server.rows.find(row => row._id === target._id)?.version).toBe(3)
+    const active = within(panel).getByRole('region', { name: 'Current active Recipe' })
+    await within(active).findByText(/No Recipe is currently active/)
+    await waitFor(() => expect(within(panel).getByLabelText('History version 3').textContent).toContain('Inactive at history read'))
+  })
+
+  it.each([2, 9])('activates version %s and replaces the current pointer regardless of version order', async version => {
+    const target = lifecycleVersion(version), previous = lifecycleVersion(5, { isActive: true })
+    const { user, server, actionPosts } = recipeActionSetup([lifecycleVersion(10), target, previous])
+    const { panel, dialog } = await recipeActionOpen(user, target)
+    await waitFor(() => expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false))
+    expect(dialog.textContent).toMatch(/replac/i)
+    expect(dialog.textContent).toMatch(/version 5|v5/i)
+    if (version < previous.version) expect(dialog.textContent).toMatch(/older|version numbers do not restrict/i)
+    await user.click(recipeActionConfirm(dialog))
+    await waitFor(() => expect(server.rows.find(row => row._id === target._id)?.isActive).toBe(true))
+    expect(server.rows.find(row => row._id === previous._id)?.isActive).toBe(false)
+    expect(server.rows.filter(row => row.isActive)).toHaveLength(1)
+    await waitFor(() => expect(within(panel).getByLabelText(`History version ${version}`).textContent).toContain('Current active version'))
+    expect(actionPosts()).toHaveLength(1)
+  })
+
+  it('cancels confirmation without a mutation and restores the contextual action focus', async () => {
+    const target = lifecycleVersion(3)
+    const { user, actionPosts } = recipeActionSetup([target])
+    const { opener, dialog } = await recipeActionOpen(user, target)
+    await waitFor(() => expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false))
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel Recipe action' }))
+    expect(screen.queryByRole('dialog', { name: 'Recipe lifecycle confirmation' })).toBeNull()
+    expect(document.activeElement).toBe(opener)
+    expect(actionPosts()).toHaveLength(0)
+  })
+
+  it.each(['unavailable-product', 'missing-product', 'inactive-ingredient', 'missing-ingredient', 'failed-reference'])(
+    'blocks activation when fresh reads establish %s', async failure => {
+      const target = lifecycleVersion(3)
+      let checking = false
+      const { user, actionPosts } = recipeActionSetup([target], (url, init) => {
+        if (!checking || init.method !== 'GET') return
+        if (url.pathname === `/api/products/${refProductId}`) {
+          if (failure === 'unavailable-product') return refJson({ data: { ...refProduct, isAvailable: false } })
+          if (failure === 'missing-product') return refJson({ error: 'Not found' }, 404)
+        }
+        if (url.pathname === `/api/ingredients/${refIngredientId}`) {
+          if (failure === 'inactive-ingredient') return refJson({ data: { ...refIngredient, isActive: false } })
+          if (failure === 'missing-ingredient') return refJson({ error: 'Not found' }, 404)
+          if (failure === 'failed-reference') return refJson({ error: 'private ingredient error' }, 500)
+        }
+      })
+      const { panel } = await historyOpen(user, target)
+      await within(panel).findByLabelText('History version 3')
+      await user.click(within(panel).getByRole('button', { name: 'Show Recipe lifecycle controls' }))
+      checking = true
+      await user.click(within(panel).getByRole('button', { name: 'Activate version 3' }))
+      const dialog = await screen.findByRole('dialog', { name: 'Recipe lifecycle confirmation' })
+      expect((await within(dialog).findAllByRole('alert')).length).toBeGreaterThan(0)
+      expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', true)
+      expect(dialog.textContent).not.toContain('private ingredient error')
+      fireEvent.click(recipeActionConfirm(dialog))
+      expect(actionPosts()).toHaveLength(0)
+    })
+
+  it('keeps empty historical membership readable and explicitly disables activation', async () => {
+    const target = lifecycleVersion(3, { ingredients: [] })
+    const { user, actionPosts } = recipeActionSetup([target])
+    const { panel } = await historyOpen(user, target)
+    const card = await within(panel).findByLabelText('History version 3')
+    await user.click(within(panel).getByRole('button', { name: 'Show Recipe lifecycle controls' }))
+    expect(within(card).getByRole('button', { name: 'Activate version 3' })).toHaveProperty('disabled', true)
+    expect(card.textContent).toMatch(/cannot be activated.*no Ingredient membership/i)
+    expect(actionPosts()).toHaveLength(0)
+  })
+
+  it.each(['unavailable-product', 'inactive-ingredient', 'missing-references', 'empty-membership'])(
+    'allows active Recipe deactivation despite %s', async unavailable => {
+      const target = lifecycleVersion(3, { isActive: true, ...(unavailable === 'empty-membership' ? { ingredients: [] } : {}) })
+      const { user, server, actionPosts } = recipeActionSetup([target], (url, init) => {
+        if (init.method !== 'GET') return
+        if (url.pathname === `/api/products/${refProductId}` && unavailable === 'unavailable-product') return refJson({ data: { ...refProduct, isAvailable: false } })
+        if (url.pathname === `/api/ingredients/${refIngredientId}` && unavailable === 'inactive-ingredient') return refJson({ data: { ...refIngredient, isActive: false } })
+        if (unavailable === 'missing-references' && [ `/api/products/${refProductId}`, `/api/ingredients/${refIngredientId}` ].includes(url.pathname)) return refJson({ error: 'Not found' }, 404)
+      })
+      const { dialog } = await recipeActionOpen(user, target, 'deactivate')
+      await waitFor(() => expect(recipeActionConfirm(dialog, 'deactivate')).toHaveProperty('disabled', false))
+      await user.click(recipeActionConfirm(dialog, 'deactivate'))
+      await waitFor(() => expect(actionPosts()).toHaveLength(1))
+      await waitFor(() => expect(server.rows[0].isActive).toBe(false))
+      expect(actionPosts()).toHaveLength(1)
+    })
+
+  it('rechecks fresh target, references, active state and every history page before sending the action', async () => {
+    const target = lifecycleVersion(1)
+    const rows = [target, ...Array.from({ length: 101 }, (_, index) => lifecycleVersion(index + 2))]
+    const { user, gets, actionPosts } = recipeActionSetup(rows)
+    const { dialog } = await recipeActionOpen(user, target)
+    await waitFor(() => expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false))
+    const before = gets().length
+    expect(gets().filter(url => url.pathname === '/api/recipes' && url.searchParams.get('limit') === '100'
+      && url.searchParams.get('page') === '2')).toHaveLength(1)
+    await user.click(recipeActionConfirm(dialog))
+    await waitFor(() => expect(actionPosts()).toHaveLength(1))
+    const rechecks = gets().slice(before)
+    expect(rechecks.some(url => url.pathname === `/api/recipes/${target._id}`)).toBe(true)
+    expect(rechecks.some(url => url.pathname === `/api/products/${target.productId}`)).toBe(true)
+    expect(rechecks.some(url => url.pathname === `/api/ingredients/${refIngredientId}`)).toBe(true)
+    expect(rechecks.some(isActiveHistoryRead)).toBe(true)
+    const allHistory = rechecks.filter(url => url.pathname === '/api/recipes' && url.searchParams.get('limit') === '100')
+    expect(allHistory.some(url => url.searchParams.get('page') === '2')).toBe(true)
+    expect(allHistory.every(url => !url.searchParams.has('isActive'))).toBe(true)
+  })
+
+  it.each(['quantity', 'active-pointer', 'new-version', 'ingredient-metadata'])(
+    'requires another explicit confirmation after %s changes during review', async change => {
+      const target = lifecycleVersion(3), oldActive = lifecycleVersion(1, { isActive: true })
+      const { user, server, actionPosts } = recipeActionSetup([target, oldActive])
+      const { dialog } = await recipeActionOpen(user, target)
+      await waitFor(() => expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false))
+      if (change === 'quantity') server.rows = server.rows.map(row => row._id === target._id
+        ? { ...row, ingredients: [{ ingredientId: refIngredientId, quantity: '2.000001' }] } : row)
+      if (change === 'active-pointer') server.rows = [target, { ...oldActive, isActive: false }, lifecycleVersion(2, { isActive: true })]
+      if (change === 'new-version') server.rows = [...server.rows, lifecycleVersion(4)]
+      if (change === 'ingredient-metadata') server.ingredients = server.ingredients.map(row => ({ ...row, name: 'Fresh Ingredient name' }))
+      await user.click(recipeActionConfirm(dialog))
+      await within(dialog).findByText(/Server state changed.*No mutation request was sent/)
+      expect(actionPosts()).toHaveLength(0)
+      expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false)
+      if (change === 'quantity') expect(within(dialog).getByText('2.000001')).toBeTruthy()
+      if (change === 'ingredient-metadata') expect(within(dialog).getByText('Fresh Ingredient name')).toBeTruthy()
+      await user.click(recipeActionConfirm(dialog))
+      await waitFor(() => expect(actionPosts()).toHaveLength(1))
+      expect(server.rows.find(row => row._id === target._id)?.isActive).toBe(true)
+    })
+
+  it.each(['unavailable-product', 'inactive-ingredient', 'already-active'])(
+    'blocks a stale activation confirmation after fresh state becomes %s', async change => {
+      const target = lifecycleVersion(3)
+      const { user, server, actionPosts } = recipeActionSetup([target])
+      const { dialog } = await recipeActionOpen(user, target)
+      await waitFor(() => expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false))
+      if (change === 'unavailable-product') server.product.isAvailable = false
+      if (change === 'inactive-ingredient') server.ingredients[0].isActive = false
+      if (change === 'already-active') server.rows[0].isActive = true
+      await user.click(recipeActionConfirm(dialog))
+      await within(dialog).findByText(/Server state changed.*No mutation request was sent/)
+      expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', true)
+      expect(actionPosts()).toHaveLength(0)
+    })
+
+  it('does not deactivate a different active version after the reviewed target becomes inactive', async () => {
+    const target = lifecycleVersion(3, { isActive: true }), other = lifecycleVersion(5)
+    const { user, server, actionPosts } = recipeActionSetup([target, other])
+    const { dialog } = await recipeActionOpen(user, target, 'deactivate')
+    await waitFor(() => expect(recipeActionConfirm(dialog, 'deactivate')).toHaveProperty('disabled', false))
+    server.rows = [{ ...target, isActive: false }, { ...other, isActive: true }]
+    await user.click(recipeActionConfirm(dialog, 'deactivate'))
+    await within(dialog).findByText(/different active version will not be deactivated/)
+    expect(recipeActionConfirm(dialog, 'deactivate')).toHaveProperty('disabled', true)
+    expect(server.rows.find(row => row._id === other._id)?.isActive).toBe(true)
+    expect(actionPosts()).toHaveLength(0)
+  })
+
+  it('takes a synchronous confirmation lock and shows no optimistic active badge while POST is pending', async () => {
+    const target = lifecycleVersion(3), pending = refDeferred<Response>()
+    const { user, actionPosts } = recipeActionSetup([target], (_url, init) => init.method === 'POST' ? pending.promise : undefined)
+    const { panel, dialog } = await recipeActionOpen(user, target)
+    await waitFor(() => expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false))
+    fireEvent.click(recipeActionConfirm(dialog)); fireEvent.click(recipeActionConfirm(dialog))
+    await waitFor(() => expect(actionPosts()).toHaveLength(1))
+    fireEvent.click(recipeActionConfirm(dialog)); fireEvent.click(recipeActionConfirm(dialog))
+    expect(actionPosts()).toHaveLength(1)
+    expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', true)
+    expect(within(panel).getByLabelText('History version 3').textContent).toContain('Inactive at history read')
+    expect(within(panel).getByLabelText('History version 3').textContent).not.toContain('Current active version')
+    expect(screen.getByRole('button', { name: 'Products' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'New recipe' })).toHaveProperty('disabled', true)
+    expect(within(dialog).getByRole('button', { name: 'Cancel Recipe action' })).toHaveProperty('disabled', true)
+    await act(async () => pending.resolve(refJson({ data: { ...target, isActive: true } })))
+    expect(actionPosts()).toHaveLength(1)
+  })
+
+  it('blocks an already-open creation form while a lifecycle request owns the shared lock', async () => {
+    const target = lifecycleVersion(3), pending = refDeferred<Response>()
+    const { user, posts, actionPosts } = recipeActionSetup([target], (_url, init) => init.method === 'POST' ? pending.promise : undefined)
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    const { dialog } = await recipeActionOpen(user, target)
+    await waitFor(() => expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false))
+    lifecycleSubmit(form)
+    expect(posts()).toHaveLength(0)
+    await user.click(recipeActionConfirm(dialog))
+    await waitFor(() => expect(actionPosts()).toHaveLength(1))
+    lifecycleSubmit(form); lifecycleSubmit(form)
+    expect(posts()).toHaveLength(1)
+    expect(within(form).getByLabelText('Quantity 1')).toHaveProperty('value', '0001.250000')
+    await act(async () => pending.resolve(refJson({ data: { ...target, isActive: true } })))
+  })
+
+  it('blocks lifecycle actions synchronously while Recipe creation is in preflight', async () => {
+    const target = lifecycleVersion(3), pending = refDeferred<Response>()
+    let submitting = false
+    const { user, posts, actionPosts } = recipeActionSetup([target], (url, init) => submitting && init.method === 'GET'
+      && url.pathname === `/api/products/${refProductId}` ? pending.promise : undefined)
+    const { panel } = await historyOpen(user, target)
+    await within(panel).findByLabelText('History version 3')
+    await user.click(within(panel).getByRole('button', { name: 'Show Recipe lifecycle controls' }))
+    await user.click(screen.getByRole('button', { name: 'New recipe' }))
+    const form = screen.getByRole('form', { name: 'Create recipe' })
+    await lifecycleFill(user, form)
+    submitting = true
+    lifecycleSubmit(form)
+    expect(within(panel).getByRole('button', { name: 'Activate version 3' })).toHaveProperty('disabled', true)
+    fireEvent.click(within(panel).getByRole('button', { name: 'Activate version 3' }))
+    expect(actionPosts()).toHaveLength(0)
+    expect(screen.queryByRole('dialog', { name: 'Recipe lifecycle confirmation' })).toBeNull()
+    expect(posts()).toHaveLength(0)
+    // A missing refreshed reference makes preflight fail without adding any creation mutation.
+    await act(async () => pending.resolve(refJson({ error: 'Not found' }, 404)))
+    await screen.findByText(/Preflight failed.*No creation request was sent/)
+    expect(posts()).toHaveLength(0)
+  })
+
+  it.each([400, 404, 409])('reports HTTP %s rejection without retrying or retaining an uncertain mutation lock', async status => {
+    const target = lifecycleVersion(3)
+    const { user, actionPosts } = recipeActionSetup([target], (_url, init) => init.method === 'POST'
+      ? refJson({ error: 'private backend rejection' }, status) : undefined)
+    const { dialog } = await recipeActionOpen(user, target)
+    await waitFor(() => expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false))
+    await user.click(recipeActionConfirm(dialog))
+    await within(dialog).findByText(/operation was rejected/i)
+    expect(actionPosts()).toHaveLength(1)
+    expect(dialog.textContent).not.toContain('private backend rejection')
+    expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Products' })).toHaveProperty('disabled', false)
+    fireEvent.click(recipeActionConfirm(dialog))
+    expect(actionPosts()).toHaveLength(1)
+  })
+
+  it.each(['network', 'timeout', 'server', 'malformed-success', 'unexpected-active', 'unexpected-quantity'])(
+    'preserves an uncertain %s operation and blocks further Recipe mutations without automatic retry', async failure => {
+      const target = lifecycleVersion(3), pending = refDeferred<Response>()
+      const { user, actionPosts, gets } = recipeActionSetup([target], (_url, init) => {
+        if (init.method !== 'POST') return
+        if (failure === 'network') throw new Error('mock unknown network outcome')
+        if (failure === 'timeout') return pending.promise
+        if (failure === 'server') return refJson({ error: 'private SQL lifecycle failure' }, 500)
+        if (failure === 'malformed-success') return refJson({ data: { unexpected: true } })
+        if (failure === 'unexpected-active') return refJson({ data: target })
+        return refJson({ data: { ...target, isActive: true, ingredients: [{ ingredientId: refIngredientId, quantity: '1.250001' }] } })
+      }, failure === 'timeout' ? 150 : 5_000)
+      const { panel, dialog } = await recipeActionOpen(user, target)
+      await waitFor(() => expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false))
+      await user.click(recipeActionConfirm(dialog))
+      await within(dialog).findByText(/lifecycle outcome is unknown/i)
+      expect(dialog.textContent).toContain(target._id)
+      expect(dialog.textContent).not.toContain('private SQL lifecycle failure')
+      expect(within(dialog).getByRole('button', { name: 'Refresh server state' })).toBeTruthy()
+      expect(within(dialog).getByRole('button', { name: 'Cancel Recipe action' })).toHaveProperty('disabled', true)
+      expect(screen.getByRole('button', { name: 'New recipe' })).toHaveProperty('disabled', true)
+      expect(screen.getByRole('button', { name: 'Products' })).toHaveProperty('disabled', true)
+      expect(within(panel).getByRole('button', { name: 'Activate version 3' })).toHaveProperty('disabled', true)
+      fireEvent.click(recipeActionConfirm(dialog)); fireEvent.click(recipeActionConfirm(dialog))
+      expect(actionPosts()).toHaveLength(1)
+      const reads = gets().length
+      if (failure === 'timeout') await act(async () => pending.resolve(refJson({ data: { ...target, isActive: true } })))
+      else await act(async () => Promise.resolve())
+      expect(gets()).toHaveLength(reads)
+      expect(actionPosts()).toHaveLength(1)
+      expect(within(dialog).getByText(/lifecycle outcome is unknown/i)).toBeTruthy()
+    })
+
+  it('reconciles an uncertain operation through GETs and requires fresh confirmation for a subsequent action', async () => {
+    const target = lifecycleVersion(3)
+    let submissions = 0
+    const { user, actionPosts, gets } = recipeActionSetup([target], (_url, init, server) => {
+      if (init.method !== 'POST' || ++submissions > 1) return
+      server.rows = server.rows.map(row => ({ ...row, isActive: row._id === target._id }))
+      return refJson({ error: 'Response unavailable after possible application' }, 500)
+    })
+    const { panel, dialog } = await recipeActionOpen(user, target)
+    await waitFor(() => expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false))
+    await user.click(recipeActionConfirm(dialog))
+    await within(dialog).findByText(/lifecycle outcome is unknown/i)
+    const before = gets().length
+    await user.click(within(dialog).getByRole('button', { name: 'Refresh server state' }))
+    await within(dialog).findByText(/Server state was observed after refresh/)
+    expect(dialog.textContent).toMatch(/observations do not establish which request or actor caused this state/i)
+    expect(gets().slice(before).some(url => url.pathname === `/api/recipes/${target._id}`)).toBe(true)
+    expect(gets().slice(before).some(url => url.pathname === '/api/recipes' && url.searchParams.get('limit') === '100')).toBe(true)
+    expect(gets().slice(before).some(isActiveHistoryRead)).toBe(true)
+    expect(actionPosts()).toHaveLength(1)
+    expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', true)
+    const deactivate = await within(panel).findByRole('button', { name: 'Deactivate version 3' })
+    await user.click(deactivate)
+    const nextDialog = screen.getByRole('dialog', { name: 'Recipe lifecycle confirmation' })
+    await waitFor(() => expect(recipeActionConfirm(nextDialog, 'deactivate')).toHaveProperty('disabled', false))
+    expect(actionPosts()).toHaveLength(1)
+    await user.click(recipeActionConfirm(nextDialog, 'deactivate'))
+    await waitFor(() => expect(actionPosts()).toHaveLength(2))
+  })
+
+  it('retains the uncertain lock after incomplete reconciliation and retries reads only on request', async () => {
+    const target = lifecycleVersion(3)
+    let failReads = false
+    const { user, actionPosts, gets } = recipeActionSetup([target], (url, init) => {
+      if (init.method === 'POST') return refJson({ error: 'Unknown server outcome' }, 500)
+      if (failReads && init.method === 'GET' && url.pathname === `/api/recipes/${target._id}`) return refJson({ error: 'Cannot read target' }, 500)
+    })
+    const { dialog } = await recipeActionOpen(user, target)
+    await waitFor(() => expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false))
+    await user.click(recipeActionConfirm(dialog))
+    await within(dialog).findByText(/lifecycle outcome is unknown/i)
+    failReads = true
+    const before = gets().length
+    await user.click(within(dialog).getByRole('button', { name: 'Refresh server state' }))
+    await within(dialog).findByText(/could not be fully reconciled.*mutations remain blocked/i)
+    expect(gets().length).toBeGreaterThan(before)
+    expect(actionPosts()).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'New recipe' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Products' })).toHaveProperty('disabled', true)
+    expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', true)
+    failReads = false
+    await user.click(within(dialog).getByRole('button', { name: 'Refresh server state' }))
+    await within(dialog).findByText(/Server state was observed after refresh/)
+    expect(actionPosts()).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Products' })).toHaveProperty('disabled', false)
+  })
+
+  it('remembers confirmed success when refresh fails and offers a GET-only recovery', async () => {
+    const target = lifecycleVersion(3)
+    let failedRefresh = false
+    const { user, actionPosts, gets, fetch } = recipeActionSetup([target], (url, init) => {
+      if (init.method === 'POST') { failedRefresh = true; return }
+      if (failedRefresh && init.method === 'GET' && url.pathname === `/api/recipes/${target._id}`) return refJson({ error: 'Read failed after mutation' }, 500)
+    })
+    const { dialog } = await recipeActionOpen(user, target)
+    await waitFor(() => expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false))
+    await user.click(recipeActionConfirm(dialog))
+    await within(dialog).findByText(/operation was confirmed, but displayed data may be outdated/i)
+    expect(within(dialog).getByText(/operation was confirmed by the server/i)).toBeTruthy()
+    expect(actionPosts()).toHaveLength(1)
+    expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', true)
+    const before = gets().length, requestCount = fetch.mock.calls.length
+    failedRefresh = false
+    await user.click(within(dialog).getByRole('button', { name: 'Refresh server state' }))
+    await within(dialog).findByText(/operation was confirmed\. Server reads have been refreshed/i)
+    expect(gets().length).toBeGreaterThan(before)
+    expect(fetch.mock.calls.slice(requestCount).every(([, init]) => init?.method === 'GET')).toBe(true)
+    expect(actionPosts()).toHaveLength(1)
+  })
+
+  it('ignores a stale selected-detail response after confirmed activation refreshes all Recipe views', async () => {
+    const target = lifecycleVersion(3), pending = refDeferred<Response>()
+    let detailReads = 0
+    const { user, actionPosts } = recipeActionSetup([target], (url, init) => init.method === 'GET'
+      && url.pathname === `/api/recipes/${target._id}` && ++detailReads === 1 ? pending.promise : undefined)
+    const { panel } = await historyOpen(user, target)
+    const card = await within(panel).findByLabelText('History version 3')
+    await user.click(within(card).getByRole('button', { name: 'View details for version 3' }))
+    await screen.findByText('Loading details…')
+    await user.click(within(panel).getByRole('button', { name: 'Show Recipe lifecycle controls' }))
+    await user.click(within(panel).getByRole('button', { name: 'Activate version 3' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Recipe lifecycle confirmation' })
+    await waitFor(() => expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false))
+    await user.click(recipeActionConfirm(dialog))
+    const details = screen.getByRole('region', { name: 'Record details' })
+    await waitFor(() => expect(within(details).getByText('Status', { selector: 'dt' }).parentElement?.textContent).toBe('StatusActive'))
+    await within(panel).findByText('Current active Recipe: v3')
+    await act(async () => pending.resolve(refJson({ data: target })))
+    expect(within(details).getByText('Status', { selector: 'dt' }).parentElement?.textContent).toBe('StatusActive')
+    expect(within(details).queryByText('Inactive', { selector: '.status' })).toBeNull()
+    expect(within(panel).getByLabelText('History version 3').textContent).toContain('Current active version')
+    expect(actionPosts()).toHaveLength(1)
+  })
+
+  it('ignores a canceled preflight result when another Recipe confirmation is newer', async () => {
+    const target = lifecycleVersion(3), newer = lifecycleVersion(4), pending = refDeferred<Response>()
+    let defer = true
+    const { user, actionPosts } = recipeActionSetup([target, newer], (url, init) => defer && init.method === 'GET'
+      && url.pathname === `/api/recipes/${target._id}` ? pending.promise : undefined)
+    const { panel, dialog } = await recipeActionOpen(user, target)
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel Recipe action' }))
+    defer = false
+    await user.click(within(panel).getByRole('button', { name: 'Activate version 4' }))
+    const current = await screen.findByRole('dialog', { name: 'Recipe lifecycle confirmation' })
+    await waitFor(() => expect(recipeActionConfirm(current)).toHaveProperty('disabled', false))
+    await act(async () => pending.resolve(refJson({ data: target })))
+    expect(current.textContent).toContain(newer._id)
+    expect(current.textContent).not.toContain(target._id)
+    expect(recipeActionConfirm(current)).toHaveProperty('disabled', false)
+    expect(actionPosts()).toHaveLength(0)
+  })
+
+  it('supports keyboard confirmation review, cancellation and accessible state announcements', async () => {
+    const target = lifecycleVersion(3)
+    const { user, actionPosts } = recipeActionSetup([target])
+    const { opener, dialog } = await recipeActionOpen(user, target)
+    await waitFor(() => expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', false))
+    expect(document.activeElement).toBe(within(dialog).getByRole('heading', { name: 'Review Recipe activation' }))
+    expect(within(dialog).getByRole('status')).toBeTruthy()
+    within(dialog).getByRole('button', { name: 'Cancel Recipe action' }).focus()
+    await user.keyboard('{Enter}')
+    expect(screen.queryByRole('dialog', { name: 'Recipe lifecycle confirmation' })).toBeNull()
+    expect(document.activeElement).toBe(opener)
+    expect(actionPosts()).toHaveLength(0)
+  })
+
+  it('never mutates when browsing, revealing lifecycle controls, or refreshing history reads', async () => {
+    const target = lifecycleVersion(3)
+    const { user, fetch } = recipeActionSetup([target, lifecycleVersion(1, { isActive: true })])
+    const { panel } = await historyOpen(user, target)
+    await within(panel).findByLabelText('History version 3')
+    expect(within(panel).queryByRole('button', { name: 'Activate version 3' })).toBeNull()
+    await user.click(within(panel).getByRole('button', { name: 'Show Recipe lifecycle controls' }))
+    expect(within(panel).getByRole('button', { name: 'Activate version 3' })).toBeTruthy()
+    await user.click(within(panel).getByRole('button', { name: 'Refresh history and active version' }))
+    await within(panel).findByLabelText('History version 3')
+    await user.click(within(panel).getByRole('button', { name: 'Hide Recipe lifecycle controls' }))
+    expect(screen.queryByRole('dialog', { name: 'Recipe lifecycle confirmation' })).toBeNull()
+    expect(fetch.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true)
+  })
+
+  it.each(['multiple-active', 'missing-history-target', 'duplicate-history-version', 'active-count-mismatch'])(
+    'blocks action preflight when fresh responses contain %s', async inconsistency => {
+      const target = lifecycleVersion(3)
+      let checking = false
+      const { user, actionPosts } = recipeActionSetup([target], (url, init) => {
+        if (!checking || init.method !== 'GET') return
+        if (isActiveHistoryRead(url)) {
+          if (inconsistency === 'multiple-active') return refPage([lifecycleVersion(1, { isActive: true }), lifecycleVersion(2, { isActive: true })])
+          if (inconsistency === 'active-count-mismatch') return refPage([], 1, 1, 20)
+        }
+        if (url.pathname === '/api/recipes' && url.searchParams.get('limit') === '100') {
+          if (inconsistency === 'missing-history-target') return refPage([], 1, 0, 100)
+          if (inconsistency === 'duplicate-history-version') return refPage([target, { ...target, _id: refRecipe._id }], 1, 2, 100)
+        }
+      })
+      const { panel } = await historyOpen(user, target)
+      await within(panel).findByLabelText('History version 3')
+      await user.click(within(panel).getByRole('button', { name: 'Show Recipe lifecycle controls' }))
+      checking = true
+      await user.click(within(panel).getByRole('button', { name: 'Activate version 3' }))
+      const dialog = await screen.findByRole('dialog', { name: 'Recipe lifecycle confirmation' })
+      await within(dialog).findByText(/No mutation request was sent/)
+      expect(recipeActionConfirm(dialog)).toHaveProperty('disabled', true)
+      expect(actionPosts()).toHaveLength(0)
+    })
+
+  it('preserves active-directory filters, clamps a shrinking page and refreshes selected details after deactivation', async () => {
+    const target = lifecycleVersion(21, { isActive: true })
+    const others = Array.from({ length: 20 }, (_, index) => lifecycleVersion(index + 1, {
+      isActive: true, productId: `11111111-1111-1111-1111-${String(index + 1).padStart(12, '0')}`,
+    }))
+    const { user, actionPosts, gets } = recipeActionSetup([target, ...others])
+    const { panel } = await historyOpen(user, target)
+    await within(panel).findByLabelText('History version 21')
+    const directory = screen.getByRole('region', { name: 'Recipes directory' })
+    fireEvent.change(within(directory).getByLabelText('Status'), { target: { value: 'true' } })
+    fireEvent.change(within(directory).getByLabelText('Rows per page'), { target: { value: '10' } })
+    await user.click(within(directory).getByRole('button', { name: 'Apply filters' }))
+    await within(directory).findByText('Page 1 of 3')
+    await user.click(within(directory).getByRole('button', { name: 'Next' }))
+    await within(directory).findByText('Page 2 of 3')
+    await user.click(within(directory).getByRole('button', { name: 'Next' }))
+    await within(directory).findByText('Page 3 of 3')
+    await user.click(within(panel).getByRole('button', { name: 'View details for version 21' }))
+    await within(screen.getByRole('region', { name: 'Record details' })).findByText(target._id)
+    await user.click(within(panel).getByRole('button', { name: 'Show Recipe lifecycle controls' }))
+    await user.click(within(panel).getByRole('button', { name: 'Deactivate version 21' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Recipe lifecycle confirmation' })
+    await waitFor(() => expect(recipeActionConfirm(dialog, 'deactivate')).toHaveProperty('disabled', false))
+    const before = gets().length
+    await user.click(recipeActionConfirm(dialog, 'deactivate'))
+    await within(directory).findByText('Page 2 of 2')
+    expect(within(directory).getByLabelText('Status')).toHaveProperty('value', 'true')
+    expect(within(directory).getByLabelText('Rows per page')).toHaveProperty('value', '10')
+    expect(within(panel).getByLabelText('History Product')).toHaveProperty('value', refProductId)
+    expect(within(panel).getByLabelText('History size')).toHaveProperty('value', 'S')
+    const details = screen.getByRole('region', { name: 'Record details' })
+    await waitFor(() => expect(within(details).getByText('Status', { selector: 'dt' }).parentElement?.textContent).toBe('StatusInactive'))
+    expect(within(details).getByText(target._id)).toBeTruthy()
+    expect(gets().slice(before).some(url => url.pathname === '/api/recipes' && url.searchParams.get('page') === '2'
+      && url.searchParams.get('isActive') === 'true' && url.searchParams.get('limit') === '10')).toBe(true)
+    expect(actionPosts()).toHaveLength(1)
+  })
+
+  it('reconciles empty-membership deactivation safely when the existing mutation parser cannot confirm its response', async () => {
+    const target = lifecycleVersion(3, { isActive: true, ingredients: [] })
+    const { user, server, actionPosts, fetch } = recipeActionSetup([target])
+    const { dialog } = await recipeActionOpen(user, target, 'deactivate')
+    await waitFor(() => expect(recipeActionConfirm(dialog, 'deactivate')).toHaveProperty('disabled', false))
+    await user.click(recipeActionConfirm(dialog, 'deactivate'))
+    await within(dialog).findByText(/lifecycle outcome is unknown/i)
+    expect(server.rows[0].isActive).toBe(false)
+    expect(actionPosts()).toHaveLength(1)
+    const before = fetch.mock.calls.length
+    await user.click(within(dialog).getByRole('button', { name: 'Refresh server state' }))
+    await within(dialog).findByText(/Server state was observed after refresh/)
+    expect(dialog.textContent).toContain('No active Recipe')
+    expect(fetch.mock.calls.slice(before).every(([, init]) => init?.method === 'GET')).toBe(true)
+    expect(actionPosts()).toHaveLength(1)
+  })
+
+  it('never sends a lifecycle POST after the Catalog unmounts during preflight', async () => {
+    const target = lifecycleVersion(3), pending = refDeferred<Response>()
+    const { user, unmount, actionPosts } = recipeActionSetup([target], (url, init) => init.method === 'GET'
+      && url.pathname === `/api/recipes/${target._id}` ? pending.promise : undefined)
+    await recipeActionOpen(user, target)
+    unmount()
+    await act(async () => pending.resolve(refJson({ data: target })))
+    expect(actionPosts()).toHaveLength(0)
+  })
+})

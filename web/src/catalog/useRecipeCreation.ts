@@ -4,6 +4,7 @@ import type { CatalogClient, Ingredient, Product, ProductSize, Recipe, RecipeInp
 import { useCatalogRead } from './useCatalogRead'
 import { emptyRecipeDraft, normalizeUuid, recipeMatchesPayload, validateRecipeCreation } from './recipe.validation'
 import type { RecipeFieldErrors } from './recipe.validation'
+import type { RecipeMutationLock } from './useRecipeLifecycle'
 
 export type RecipeCreationClient = {
   products: Pick<CatalogClient['products'], 'list' | 'detail'>
@@ -40,7 +41,7 @@ async function readHistory(client: RecipeCreationClient, payload: RecipeInput) {
 }
 
 /** Lives above the keyed workspace: closing/navigating never discards a draft or unknown outcome. */
-export function useRecipeCreation(client: RecipeCreationClient) {
+export function useRecipeCreation(client: RecipeCreationClient, mutationLock?: RecipeMutationLock) {
   const [draft, setDraft] = useState(emptyRecipeDraft)
   const [errors, setErrors] = useState<RecipeFieldErrors>({})
   const [visible, setVisible] = useState(false)
@@ -55,8 +56,8 @@ export function useRecipeCreation(client: RecipeCreationClient) {
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const setGate = (value: Phase) => { gate.current = value; setPhase(value) }
-  const busy = phase === 'preflight' || phase === 'saving' || phase === 'checking'
-  const locked = () => ['preflight', 'saving', 'checking'].includes(gate.current)
+  const busy = phase === 'preflight' || phase === 'saving' || phase === 'checking' || mutationLock?.owner === 'lifecycle'
+  const locked = () => ['preflight', 'saving', 'checking'].includes(gate.current) || mutationLock?.current.current === 'lifecycle'
   const loadProduct = useCallback(async () => draft.productId ? (await client.products.detail(draft.productId)).data : undefined, [client, draft.productId])
   const productRead = useCatalogRead(loadProduct)
   const ingredientIds = draft.ingredients.map(entry => entry.ingredientId).join(',')
@@ -94,6 +95,7 @@ export function useRecipeCreation(client: RecipeCreationClient) {
     const validated = validateRecipeCreation(draft)
     setErrors(validated.errors)
     if (!validated.payload) return
+    if (mutationLock && !mutationLock.acquire('creation')) return
     const payload = validated.payload
     const previousAttempt = attempted.current
     setGate('preflight') // Synchronous, before the first await or POST.
@@ -112,7 +114,9 @@ export function useRecipeCreation(client: RecipeCreationClient) {
       }
       if (!product.prices.some(row => row.size === payload.size)) {
         setErrors({ size: 'This Product no longer supports the selected size. Choose a current size.' })
-        productRead.retry(); setGate(previousAttempt ? 'uncertain' : 'editing'); return
+        productRead.retry(); setGate(previousAttempt ? 'uncertain' : 'editing')
+        if (!previousAttempt) mutationLock?.release('creation')
+        return
       }
       observed = history
       productRead.retry(); ingredientsRead.retry()
@@ -121,6 +125,7 @@ export function useRecipeCreation(client: RecipeCreationClient) {
       setMessage(`Preflight failed. No creation request was sent. ${safeMessage(error)}`)
       // A failed resubmission preflight must not bypass the previous uncertainty gate.
       setGate(attempted.current ? 'uncertain' : 'editing')
+      if (!attempted.current) mutationLock?.release('creation')
       return
     }
     const currentAttempt = { payload, observed }
@@ -140,22 +145,25 @@ export function useRecipeCreation(client: RecipeCreationClient) {
       setMessage(safeMessage(error))
       if (rejected) { attempted.current = previousAttempt; setAttempt(previousAttempt) }
       setGate(rejected && !previousAttempt ? 'editing' : 'uncertain')
+      if (rejected && !previousAttempt) mutationLock?.release('creation')
       return
     }
     if (!mounted.current) return
     setDraft(emptyRecipeDraft()); setErrors({}); setMessage(''); setReview(undefined)
     attempted.current = undefined; setAttempt(undefined); setSuccess(record)
     setVisible(false); setGate('editing')
+    mutationLock?.release('creation')
     onCreated(record)
   }
   async function refreshServerState(onRefreshed: () => void) {
     if (!attempted.current || !['uncertain', 'reviewed'].includes(gate.current)) return
+    if (mutationLock && !mutationLock.acquire('creation')) return
     const currentAttempt = attempted.current
     setGate('checking'); setAcknowledged(false); setMessage(''); setReview(undefined)
     try {
       const history = await readHistory(client, currentAttempt.payload)
       if (!mounted.current) return
-      setReview(history); setGate('reviewed'); onRefreshed()
+      setReview(history); setGate('reviewed'); mutationLock?.release('creation'); onRefreshed()
     } catch (error) {
       if (!mounted.current) return
       setMessage(`Server state could not be fully reviewed. ${safeMessage(error)}`)
