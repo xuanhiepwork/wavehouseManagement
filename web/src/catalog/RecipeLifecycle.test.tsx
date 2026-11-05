@@ -1,0 +1,881 @@
+// @vitest-environment jsdom
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createCatalogClient } from '../api/catalog'
+import type { Ingredient, Product, Recipe, RecipeInput } from '../api/catalog'
+import CatalogReferencePicker from './CatalogReferencePicker'
+import Catalog from './Catalog'
+import {
+  emptyRecipeDraft, isRecipeUuid, normalizeRecipeQuantity, normalizeUuid,
+  recipeMatchesPayload, validateRecipeCreation,
+} from './recipe.validation'
+
+const refProductId = 'abcdef12-abcd-abcd-abcd-abcdef123456'
+const refIngredientId = 'abcdef12-abcd-abcd-abcd-abcdef123457'
+const refOtherId = 'abcdef12-abcd-abcd-abcd-abcdef123458'
+const refMetadata = { createdAt: '2026-11-04T00:00:00.000Z', updatedAt: '2026-11-04T01:00:00.000Z' }
+const refProduct: Product = {
+  ...refMetadata, _id: refProductId, code: 'TEA', name: 'Picker tea', category: 'Drinks',
+  isAvailable: true, prices: [{ size: 'L', price: '3' }, { size: 'S', price: '1' }],
+}
+const refIngredient: Ingredient = {
+  ...refMetadata, _id: refIngredientId, code: 'MILK', name: 'Picker milk', category: 'Dairy',
+  unit: 'ml', costPrice: '1', minStock: '0', isActive: true,
+}
+const refOther: Ingredient = { ...refIngredient, _id: refOtherId, code: 'SUGAR', name: 'Picker sugar', unit: 'g' }
+const refPayload: RecipeInput = {
+  productId: refProductId, size: 'S', ingredients: [{ ingredientId: refIngredientId, quantity: '0001.250000' }],
+}
+const refRecipe: Recipe = {
+  ...refMetadata, ...refPayload, _id: 'abcdef12-abcd-abcd-abcd-abcdef123459', version: 3,
+  isActive: false, ingredients: [{ ingredientId: refIngredientId, quantity: '1.25' }],
+}
+
+function refJson(value: unknown, status = 200) {
+  return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } })
+}
+function refPage(data: unknown[], pageNumber = 1, total = data.length, limit = 10) {
+  return refJson({ data, pagination: { page: pageNumber, limit, total, totalPages: Math.ceil(total / limit) } })
+}
+function refDeferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
+}
+type RefHandler = (url: URL) => Response | Promise<Response> | undefined
+function refClient(handler?: RefHandler) {
+  vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Unmocked network request is forbidden') }))
+  const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async (input, init) => {
+    if (init?.method !== 'GET') throw new Error('Reference selection must never mutate')
+    const url = new URL(String(input))
+    const override = handler?.(url)
+    if (override !== undefined) return override
+    if (url.pathname === '/api/products') return refPage([refProduct])
+    if (url.pathname === '/api/ingredients') return refPage([refIngredient])
+    throw new Error('Unexpected mocked reference request')
+  })
+  return {
+    client: createCatalogClient({ baseUrl: 'http://127.0.0.1:5000/api', fetch, timeoutMs: 5_000 }),
+    fetch,
+    urls: () => fetch.mock.calls.map(([input]) => new URL(String(input))),
+  }
+}
+
+afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+
+describe('Recipe draft validation and exact comparison', () => {
+  it('requires Product, supported size, and at least one Ingredient', () => {
+    const result = validateRecipeCreation(emptyRecipeDraft())
+    expect(Object.keys(result.errors)).toEqual(['productId', 'size', 'ingredients'])
+    expect(result.payload).toBeUndefined()
+    expect(emptyRecipeDraft()).toEqual({ productId: '', size: '', ingredients: [] })
+  })
+
+  it.each(['999999999999.999999', '000001.250000', '0.000001', '1', '0000000000000001.000000'])('preserves valid quantity %s as exact payload text', quantity => {
+    const result = validateRecipeCreation({ ...refPayload, ingredients: [{ ingredientId: refIngredientId, quantity }] })
+    expect(result.errors).toEqual({})
+    expect(result.payload?.ingredients[0].quantity).toBe(quantity)
+    expect(typeof result.payload?.ingredients[0].quantity).toBe('string')
+  })
+
+  it.each([
+    '', '0', '0.000000', '000.000000', '+1', '-1', '1e2', '1E2', ' 1', '1 ', '1\n',
+    '.1', '1.', '1.0000000', '0.0000001', '1000000000000', '1,25', 'NaN', 'Infinity', '0'.repeat(100) + '1',
+  ])('rejects invalid or semantically zero quantity %j without constructing a payload', quantity => {
+    const result = validateRecipeCreation({ ...refPayload, ingredients: [{ ingredientId: refIngredientId, quantity }] })
+    expect(result.errors.quantity0).toBeTruthy()
+    expect(result.payload).toBeUndefined()
+    expect(normalizeRecipeQuantity(quantity)).toBeUndefined()
+  })
+
+  it('keeps only the exact POST fields and copies Ingredient rows in draft order', () => {
+    const draft = { ...refPayload, ingredients: [
+      { ingredientId: refOtherId.toUpperCase(), quantity: '999999999999.999999' },
+      { ingredientId: refIngredientId, quantity: '0001.250000' },
+    ] }
+    const result = validateRecipeCreation(draft)
+    expect(result.payload).toEqual(draft)
+    expect(Object.keys(result.payload!)).toEqual(['productId', 'size', 'ingredients'])
+    expect(Object.keys(result.payload!.ingredients[0])).toEqual(['ingredientId', 'quantity'])
+    expect(result.payload!.ingredients).not.toBe(draft.ingredients)
+    expect(result.payload!.ingredients[0]).not.toBe(draft.ingredients[0])
+  })
+
+  it('rejects duplicate Ingredient UUIDs regardless of letter case', () => {
+    const result = validateRecipeCreation({ ...refPayload, ingredients: [
+      { ingredientId: refIngredientId, quantity: '1' },
+      { ingredientId: refIngredientId.toUpperCase(), quantity: '2' },
+    ] })
+    expect(result.errors.ingredientId1).toMatch(/only once/)
+    expect(result.payload).toBeUndefined()
+  })
+
+  it.each(['', 'not-a-uuid', ` ${refIngredientId}`, `${refIngredientId} `])('rejects malformed UUID %j without trimming it into validity', ingredientId => {
+    expect(isRecipeUuid(ingredientId)).toBe(false)
+    expect(validateRecipeCreation({ ...refPayload, productId: ingredientId }).errors.productId).toBeTruthy()
+    expect(validateRecipeCreation({ ...refPayload, ingredients: [{ ingredientId, quantity: '1' }] }).errors.ingredientId0).toBeTruthy()
+  })
+
+  it('normalizes UUID case and insignificant decimal zeros entirely as strings', () => {
+    expect(normalizeUuid(refIngredientId.toUpperCase())).toBe(refIngredientId)
+    expect(normalizeRecipeQuantity('0001.250000')).toBe('1.25')
+    expect(normalizeRecipeQuantity('999999999999.999999')).toBe('999999999999.999999')
+    expect(normalizeRecipeQuantity('0.000001')).toBe('0.000001')
+  })
+
+  it('finds a possible matching recipe across UUID case, ingredient order, and canonical decimal representation', () => {
+    const payload = { ...refPayload, productId: refProductId.toUpperCase(), ingredients: [
+      { ingredientId: refOtherId.toUpperCase(), quantity: '0002.000000' }, ...refPayload.ingredients,
+    ] }
+    const recipe = { ...refRecipe, ingredients: [
+      { ingredientId: refIngredientId.toUpperCase(), quantity: '1.25' },
+      { ingredientId: refOtherId, quantity: '2' },
+    ] }
+    expect(recipeMatchesPayload(recipe, payload)).toBe(true)
+    expect(recipeMatchesPayload({ ...recipe, isActive: true, version: 99 }, payload)).toBe(true)
+  })
+
+  it('never equates quantities that differ in the final exact decimal digit', () => {
+    const payload = { ...refPayload, ingredients: [{ ingredientId: refIngredientId, quantity: '999999999999.999998' }] }
+    const recipe = { ...refRecipe, ingredients: [{ ingredientId: refIngredientId, quantity: '999999999999.999999' }] }
+    expect(recipeMatchesPayload(recipe, payload)).toBe(false)
+  })
+
+  it('rejects possible matches with another Product, size, empty history, malformed IDs, or duplicate rows', () => {
+    expect(recipeMatchesPayload({ ...refRecipe, productId: refOtherId }, refPayload)).toBe(false)
+    expect(recipeMatchesPayload({ ...refRecipe, size: 'M' }, refPayload)).toBe(false)
+    expect(recipeMatchesPayload({ ...refRecipe, ingredients: [] }, refPayload)).toBe(false)
+    expect(recipeMatchesPayload({ ...refRecipe, productId: 'not-a-uuid' }, refPayload)).toBe(false)
+    expect(recipeMatchesPayload(refRecipe, { ...refPayload, ingredients: [] })).toBe(false)
+    expect(recipeMatchesPayload({ ...refRecipe, ingredients: [refRecipe.ingredients[0], refRecipe.ingredients[0]] }, {
+      ...refPayload, ingredients: [refPayload.ingredients[0], refPayload.ingredients[0]],
+    })).toBe(false)
+  })
+})
+
+describe('Catalog reference selection', () => {
+  it('defaults to available Products and displays only supported sizes in S/M/L order', async () => {
+    const { client, urls, fetch } = refClient()
+    const onSelect = vi.fn()
+    render(<CatalogReferencePicker client={client} kind="product" onSelect={onSelect} />)
+    const table = await screen.findByRole('table', { name: 'Product selection results' })
+    expect(within(table).getByText('S, L')).toBeTruthy()
+    expect(urls()[0].searchParams.get('isAvailable')).toBe('true')
+    expect(urls()[0].searchParams.get('page')).toBe('1')
+    expect(urls()[0].searchParams.get('limit')).toBe('10')
+    expect(urls()[0].searchParams.has('search')).toBe(false)
+    await userEvent.click(screen.getByRole('button', { name: 'Select Picker tea' }))
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(refProduct)
+    expect(fetch.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true)
+  })
+
+  it('paginates Products and resets to page one when the page size changes', async () => {
+    const { client, urls } = refClient(url => refPage([refProduct], +(url.searchParams.get('page') ?? '1'), 21, +(url.searchParams.get('limit') ?? '10')))
+    render(<CatalogReferencePicker client={client} kind="product" onSelect={vi.fn()} />)
+    await screen.findByText('Page 1 of 3')
+    await userEvent.click(screen.getByRole('button', { name: 'Next products page' }))
+    await screen.findByText('Page 2 of 3')
+    expect(urls().at(-1)?.searchParams.get('page')).toBe('2')
+    fireEvent.change(screen.getByLabelText('Products per page'), { target: { value: '20' } })
+    await screen.findByText('Page 1 of 2')
+    expect(urls().at(-1)?.searchParams.get('limit')).toBe('20')
+    expect(urls().at(-1)?.searchParams.get('page')).toBe('1')
+  })
+
+  it('serializes an explicit unavailable Product filter, trimmed search, and a reset page', async () => {
+    const { client, urls } = refClient(url => refPage([{ ...refProduct, isAvailable: false }], +(url.searchParams.get('page') ?? '1'), 21))
+    render(<CatalogReferencePicker client={client} kind="product" onSelect={vi.fn()} />)
+    await screen.findByText('Page 1 of 3')
+    await userEvent.click(screen.getByRole('button', { name: 'Next products page' }))
+    await screen.findByText('Page 2 of 3')
+    fireEvent.change(screen.getByLabelText('Search products'), { target: { value: ' tea & milk ' } })
+    fireEvent.change(screen.getByLabelText('Product availability'), { target: { value: 'false' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Apply product filters' }))
+    await waitFor(() => expect(urls().at(-1)?.searchParams.get('search')).toBe('tea & milk'))
+    expect(urls().at(-1)?.searchParams.get('isAvailable')).toBe('false')
+    expect(urls().at(-1)?.searchParams.get('page')).toBe('1')
+    expect(screen.getByText(/Unavailable products can be used in an inactive recipe draft/).textContent).toContain('does not establish activation eligibility')
+  })
+
+  it('offers active or explicitly inactive Ingredients without inventing a combined-all filter', async () => {
+    const { client, urls } = refClient(url => refPage([{ ...refIngredient, isActive: url.searchParams.get('isActive') !== 'false' }]))
+    const onSelect = vi.fn()
+    render(<CatalogReferencePicker client={client} kind="ingredient" onSelect={onSelect} />)
+    await screen.findByRole('table', { name: 'Ingredient selection results' })
+    expect(urls()[0].searchParams.get('isActive')).toBe('true')
+    const status = screen.getByLabelText('Ingredient status')
+    expect(within(status).getAllByRole('option').map(option => option.getAttribute('value'))).toEqual(['true', 'false'])
+    fireEvent.change(status, { target: { value: 'false' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Apply ingredient filters' }))
+    await screen.findByText('Inactive', { selector: '.status' })
+    expect(urls().at(-1)?.searchParams.get('isActive')).toBe('false')
+    expect(screen.getByText(/Inactive ingredients can be used in an inactive recipe draft/).textContent).toContain('does not establish activation eligibility')
+    await userEvent.click(screen.getByRole('button', { name: 'Add Picker milk' }))
+    expect(onSelect.mock.calls[0][0].isActive).toBe(false)
+  })
+
+  it('retains selected UUIDs across pages, searches, and active/inactive filters and prevents duplicate selection', async () => {
+    const { client } = refClient(url => {
+      const current = +(url.searchParams.get('page') ?? '1')
+      const item = current === 2 ? refOther : refIngredient
+      return refPage([{ ...item, isActive: url.searchParams.get('isActive') !== 'false' }], current, 11)
+    })
+    const selected = vi.fn()
+    function Selections() {
+      const [ids, setIds] = useState<string[]>([])
+      return <><output aria-label="Selected Ingredient count">{ids.length}</output>
+        <CatalogReferencePicker client={client} kind="ingredient" selectedIds={ids} onSelect={item => {
+          selected(item)
+          setIds(previous => [...previous, item._id.toUpperCase()])
+        }} /></>
+    }
+    render(<Selections />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Add Picker milk' }))
+    expect(screen.getByRole('button', { name: 'Selected Picker milk' })).toHaveProperty('disabled', true)
+    await userEvent.click(screen.getByRole('button', { name: 'Next ingredients page' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Add Picker sugar' }))
+    expect(screen.getByLabelText('Selected Ingredient count').textContent).toBe('2')
+    fireEvent.change(screen.getByLabelText('Search ingredients'), { target: { value: 'milk' } })
+    fireEvent.change(screen.getByLabelText('Ingredient status'), { target: { value: 'false' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Apply ingredient filters' }))
+    const duplicate = await screen.findByRole('button', { name: 'Selected Picker milk' })
+    expect(duplicate).toHaveProperty('disabled', true)
+    expect(duplicate.getAttribute('aria-pressed')).toBe('true')
+    await userEvent.click(duplicate)
+    expect(selected).toHaveBeenCalledTimes(2)
+    expect(screen.getByLabelText('Selected Ingredient count').textContent).toBe('2')
+  })
+
+  it('uses Enter for search and keyboard selection without submitting the surrounding Recipe form', async () => {
+    const { client, urls, fetch } = refClient()
+    const onSelect = vi.fn(), onSubmit = vi.fn()
+    render(<form aria-label="Test recipe draft" onSubmit={event => { event.preventDefault(); onSubmit() }}>
+      <CatalogReferencePicker client={client} kind="product" onSelect={onSelect} />
+    </form>)
+    await screen.findByRole('table')
+    const user = userEvent.setup()
+    const search = screen.getByLabelText('Search products')
+    search.focus()
+    await user.type(search, 'tea{Enter}')
+    await waitFor(() => expect(urls().at(-1)?.searchParams.get('search')).toBe('tea'))
+    const select = await screen.findByRole('button', { name: 'Select Picker tea' })
+    select.focus()
+    await user.keyboard('{Enter}')
+    expect(onSelect).toHaveBeenCalledOnce()
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(fetch.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true)
+    expect(screen.getByRole('region', { name: 'Product selection results' }).getAttribute('tabindex')).toBe('0')
+    expect(screen.getAllByRole('columnheader').every(header => header.getAttribute('scope') === 'col')).toBe(true)
+  })
+
+  it('shows loading and an empty state using only mocked GETs', async () => {
+    const pending = refDeferred<Response>()
+    const { client } = refClient(() => pending.promise)
+    render(<CatalogReferencePicker client={client} kind="ingredient" onSelect={vi.fn()} />)
+    expect(screen.getByRole('status').textContent).toContain('Loading ingredients for selection')
+    expect(screen.getByRole('button', { name: 'Next ingredients page' })).toHaveProperty('disabled', true)
+    await act(async () => pending.resolve(refPage([])))
+    expect(await screen.findByText('No ingredients match these selection filters.')).toBeTruthy()
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('sanitizes errors and retries failed reference reads only on explicit action', async () => {
+    let failed = true
+    const { client, fetch } = refClient(() => failed ? refJson({ error: 'password=private database failure' }, 500) : refPage([refProduct]))
+    render(<CatalogReferencePicker client={client} kind="product" onSelect={vi.fn()} />)
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Unable to load products for selection')
+    expect(alert.textContent).not.toContain('password=')
+    expect(fetch).toHaveBeenCalledOnce()
+    failed = false
+    await userEvent.click(screen.getByRole('button', { name: 'Retry products selection' }))
+    expect(await screen.findByRole('button', { name: 'Select Picker tea' })).toBeTruthy()
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('prevents a stale response from replacing a newer search result', async () => {
+    const pending = refDeferred<Response>()
+    const { client } = refClient(url => url.searchParams.get('search') === 'old' ? pending.promise : refPage([refProduct]))
+    render(<CatalogReferencePicker client={client} kind="product" onSelect={vi.fn()} />)
+    await screen.findByRole('table')
+    const search = screen.getByLabelText('Search products')
+    fireEvent.change(search, { target: { value: 'old' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Apply product filters' }))
+    await screen.findByRole('status')
+    fireEvent.change(search, { target: { value: 'new' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Apply product filters' }))
+    await screen.findByRole('button', { name: 'Select Picker tea' })
+    await act(async () => pending.resolve(refPage([{ ...refProduct, name: 'Stale product' }])))
+    expect(screen.getByRole('button', { name: 'Select Picker tea' })).toBeTruthy()
+    expect(screen.queryByText('Stale product')).toBeNull()
+  })
+
+  it('prevents a stale error from replacing a newer filter result', async () => {
+    const pending = refDeferred<Response>()
+    const { client } = refClient(url => url.searchParams.get('search') === 'old' ? pending.promise : refPage([refIngredient]))
+    render(<CatalogReferencePicker client={client} kind="ingredient" onSelect={vi.fn()} />)
+    await screen.findByRole('table')
+    fireEvent.change(screen.getByLabelText('Search ingredients'), { target: { value: 'old' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Apply ingredient filters' }))
+    await screen.findByRole('status')
+    fireEvent.change(screen.getByLabelText('Search ingredients'), { target: { value: 'new' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Apply ingredient filters' }))
+    await screen.findByRole('button', { name: 'Add Picker milk' })
+    await act(async () => pending.reject(new Error('late network failure')))
+    expect(screen.getByRole('button', { name: 'Add Picker milk' })).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('isolates pending reads when switching picker kinds and hides disabled pickers safely', async () => {
+    const pending = refDeferred<Response>()
+    const { client } = refClient(url => url.pathname === '/api/products' ? pending.promise : refPage([refIngredient]))
+    const onSelect = vi.fn()
+    const { rerender } = render(<CatalogReferencePicker client={client} kind="product" onSelect={onSelect} />)
+    await screen.findByRole('status')
+    rerender(<CatalogReferencePicker client={client} kind="ingredient" onSelect={onSelect} disabled />)
+    const button = await screen.findByRole('button', { name: 'Add Picker milk' })
+    await userEvent.click(button)
+    expect(onSelect).not.toHaveBeenCalled()
+    expect((screen.getByLabelText('Search ingredients') as HTMLInputElement).closest('fieldset')).toHaveProperty('disabled', true)
+    await act(async () => pending.resolve(refPage([refProduct])))
+    expect(screen.queryByText('Picker tea')).toBeNull()
+    rerender(<CatalogReferencePicker client={client} kind="ingredient" onSelect={onSelect} visible={false} />)
+    expect(screen.queryByRole('region', { name: 'Ingredient selection' })).toBeNull()
+  })
+})
+
+type LifecycleHandler = (url: URL, init: RequestInit) => Response | Promise<Response> | undefined
+function lifecycleSetup(handler?: LifecycleHandler, timeoutMs = 5_000) {
+  vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Unmocked network request is forbidden') }))
+  const created: Recipe[] = []
+  const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async (input, initial) => {
+    const init = initial ?? {}
+    const url = new URL(String(input))
+    if (url.origin !== 'http://127.0.0.1:5000') throw new Error('Unexpected mocked origin')
+    const override = handler?.(url, init)
+    if (override !== undefined) return override
+    if (init.method === 'GET') {
+      if (url.pathname === '/api/products') return refPage([refProduct], +(url.searchParams.get('page') ?? '1'), 1, +(url.searchParams.get('limit') ?? '20'))
+      if (url.pathname === '/api/ingredients') return refPage([refIngredient, refOther], +(url.searchParams.get('page') ?? '1'), 2, +(url.searchParams.get('limit') ?? '20'))
+      if (url.pathname === `/api/products/${refProductId}`) return refJson({ data: refProduct })
+      if (url.pathname === `/api/ingredients/${refIngredientId}`) return refJson({ data: refIngredient })
+      if (url.pathname === `/api/ingredients/${refOtherId}`) return refJson({ data: refOther })
+      if (url.pathname === '/api/recipes') {
+        const records = created.filter(record => (!url.searchParams.has('productId') || record.productId === url.searchParams.get('productId'))
+          && (!url.searchParams.has('size') || record.size === url.searchParams.get('size'))
+          && (!url.searchParams.has('isActive') || String(record.isActive) === url.searchParams.get('isActive')))
+        const current = +(url.searchParams.get('page') ?? '1'), limit = +(url.searchParams.get('limit') ?? '20')
+        return refPage(records.slice((current - 1) * limit, current * limit), current, records.length, limit)
+      }
+      const record = created.find(recipe => url.pathname === `/api/recipes/${recipe._id}`)
+      if (record) return refJson({ data: record })
+    }
+    if (init.method === 'POST' && url.pathname === '/api/recipes') {
+      const payload = JSON.parse(String(init.body)) as RecipeInput
+      const record: Recipe = { ...refMetadata, ...payload, _id: refRecipe._id, version: 3, isActive: false,
+        ingredients: payload.ingredients.map(row => ({ ...row, quantity: normalizeRecipeQuantity(row.quantity)! })) }
+      created.push(record)
+      return refJson({ data: record }, 201)
+    }
+    throw new Error('Unexpected mocked lifecycle request')
+  })
+  const client = createCatalogClient({ baseUrl: 'http://127.0.0.1:5000/api', fetch, timeoutMs })
+  const rendered = render(<Catalog client={client} />)
+  return {
+    client, fetch, user: userEvent.setup(), created, unmount: rendered.unmount,
+    posts: () => fetch.mock.calls.filter(([, init]) => init?.method === 'POST'),
+    gets: () => fetch.mock.calls.filter(([, init]) => init?.method === 'GET').map(([url]) => new URL(String(url))),
+  }
+}
+async function lifecycleOpen(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'Recipes' }))
+  await user.click(screen.getByRole('button', { name: 'New recipe' }))
+  return screen.getByRole('form', { name: 'Create recipe' })
+}
+async function lifecycleFill(user: ReturnType<typeof userEvent.setup>, form: HTMLElement, quantity = '0001.250000') {
+  await user.click(await within(form).findByRole('button', { name: 'Select Picker tea' }))
+  await waitFor(() => expect(within(form).getByLabelText('Recipe size')).toHaveProperty('disabled', false))
+  fireEvent.change(within(form).getByLabelText('Recipe size'), { target: { value: 'S' } })
+  await user.click(await within(form).findByRole('button', { name: 'Add Picker milk' }))
+  fireEvent.change(within(form).getByLabelText('Quantity 1'), { target: { value: quantity } })
+}
+function lifecycleSubmit(form: HTMLElement) { fireEvent.submit(form) }
+const lifecycleAck = 'I reviewed server state and understand resubmission may create an additional version.'
+function lifecycleHistory(rows: Recipe[], url: URL) {
+  const current = +(url.searchParams.get('page') ?? '1'), limit = +(url.searchParams.get('limit') ?? '20')
+  return refPage(rows.slice((current - 1) * limit, current * limit), current, rows.length, limit)
+}
+function lifecycleVersion(version: number, overrides: Partial<Recipe> = {}): Recipe {
+  return { ...refRecipe, _id: `00000000-0000-0000-0000-${String(version).padStart(12, '0')}`, version, ...overrides }
+}
+
+describe('Recipe creation integration', () => {
+  it('restores focus when closing creation while existing details remain selected', async () => {
+    const { user, posts } = lifecycleSetup((url, init) => {
+      if (init.method !== 'GET') return
+      if (url.pathname === '/api/recipes') return lifecycleHistory([refRecipe], url)
+      if (url.pathname === `/api/recipes/${refRecipe._id}`) return refJson({ data: refRecipe })
+    })
+    await user.click(screen.getByRole('button', { name: 'Recipes' }))
+    await user.click(await screen.findByRole('button', { name: `View recipe S version 3 for ${refProductId}` }))
+    await screen.findByRole('region', { name: 'Record details' })
+    await user.click(screen.getByRole('button', { name: 'New recipe' }))
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Create recipe' }))
+    await user.click(screen.getByRole('button', { name: 'Close recipe form' }))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'New recipe' }))
+    expect(screen.getByRole('region', { name: 'Record details' })).toBeTruthy()
+    expect(posts()).toHaveLength(0)
+  })
+
+  it('restores focus to New recipe after closing details opened by successful creation', async () => {
+    const { user } = lifecycleSetup()
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    lifecycleSubmit(form)
+    await screen.findByText(/Recipe version 3 created successfully/)
+    const details = await screen.findByRole('region', { name: 'Record details' })
+    await within(details).findByText(refRecipe._id)
+    expect(document.activeElement).toBe(within(details).getByRole('heading', { name: 'Record details' }))
+    await user.click(within(details).getByRole('button', { name: 'Close details' }))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'New recipe' }))
+  })
+
+  it('opens a possible matching version without resubmitting and restores focus when its details close', async () => {
+    let reviewing = false
+    const { user, posts } = lifecycleSetup((url, init) => {
+      if (init.method === 'POST') return refJson({ error: 'Unknown' }, 500)
+      if (url.pathname === '/api/recipes' && url.searchParams.get('limit') === '100') return lifecycleHistory(reviewing ? [refRecipe] : [], url)
+      if (url.pathname === `/api/recipes/${refRecipe._id}`) return refJson({ data: refRecipe })
+    })
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    lifecycleSubmit(form)
+    await screen.findByText('Creation outcome is unknown')
+    reviewing = true
+    await user.click(within(form).getByRole('button', { name: 'Refresh Recipe server state' }))
+    await user.click(await screen.findByRole('button', { name: 'View possible version 3' }))
+    const details = await screen.findByRole('region', { name: 'Record details' })
+    await within(details).findByText(refRecipe._id)
+    await user.click(within(details).getByRole('button', { name: 'Close details' }))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'New recipe' }))
+    expect(posts()).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'New recipe' }))
+    expect(screen.getByLabelText('Quantity 1')).toHaveProperty('value', '0001.250000')
+    expect(screen.getByRole('button', { name: 'Submit recipe again' })).toHaveProperty('disabled', true)
+  })
+
+  it('never sends POST after the Catalog unmounts during preflight', async () => {
+    const pending = refDeferred<Response>()
+    let checking = false
+    const { user, posts, unmount } = lifecycleSetup((url, init) => {
+      if (checking && init.method === 'GET' && url.pathname === `/api/products/${refProductId}`) return pending.promise
+    })
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    checking = true
+    lifecycleSubmit(form)
+    expect(screen.getByRole('button', { name: 'Checking references...' })).toHaveProperty('disabled', true)
+    unmount()
+    await act(async () => pending.resolve(refJson({ data: refProduct })))
+    expect(posts()).toHaveLength(0)
+  })
+
+  it('submits exact quantity strings and only contract fields, displays the assigned inactive version, and refreshes list and detail', async () => {
+    const { user, posts, gets } = lifecycleSetup()
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form, '999999999999.999999')
+    await user.click(within(form).getByRole('button', { name: 'Add Picker sugar' }))
+    fireEvent.change(within(form).getByLabelText('Quantity 2'), { target: { value: '0001.250000' } })
+    const directory = screen.getByRole('region', { name: 'Recipes directory' })
+    fireEvent.change(within(directory).getByLabelText('Rows per page'), { target: { value: '10' } })
+    fireEvent.change(within(directory).getByLabelText('Status'), { target: { value: 'false' } })
+    await user.click(within(directory).getByRole('button', { name: 'Apply filters' }))
+    const getsBefore = gets().length
+    lifecycleSubmit(form)
+    expect(await screen.findByText(/Recipe version 3 created successfully\. Created as Inactive/)).toBeTruthy()
+    expect(posts()).toHaveLength(1)
+    expect(JSON.parse(String(posts()[0][1]?.body))).toEqual({ productId: refProductId, size: 'S', ingredients: [
+      { ingredientId: refIngredientId, quantity: '999999999999.999999' },
+      { ingredientId: refOtherId, quantity: '0001.250000' },
+    ] })
+    expect(screen.queryByRole('form', { name: 'Create recipe' })).toBeNull()
+    const details = await screen.findByRole('region', { name: 'Record details' })
+    await within(details).findByText(refRecipe._id)
+    expect(within(details).getByText('999999999999.999999').textContent).toBe('999999999999.999999')
+    const refresh = gets().slice(getsBefore).find(url => url.pathname === '/api/recipes' && url.searchParams.get('limit') === '10')
+    expect(refresh?.searchParams.get('page')).toBe('1')
+    expect(refresh?.searchParams.get('isActive')).toBe('false')
+    expect(gets().some(url => url.pathname === `/api/recipes/${refRecipe._id}`)).toBe(true)
+    expect(posts().every(([url]) => String(url).endsWith('/api/recipes'))).toBe(true)
+    await user.click(screen.getByRole('button', { name: 'New recipe' }))
+    expect(screen.getByLabelText('Selected Product UUID')).toHaveProperty('value', '')
+    expect(screen.queryByLabelText('Quantity 1')).toBeNull()
+  })
+
+  it('loads detail sizes in S/M/L order and clears size but preserves Ingredient quantities on a Product change', async () => {
+    const second: Product = { ...refProduct, _id: refOtherId, name: 'Different product', code: 'OTHER', prices: [{ size: 'M', price: '2' }] }
+    const { user, posts } = lifecycleSetup((url, init) => {
+      if (init.method === 'GET' && url.pathname === '/api/products') return refPage([refProduct, second])
+      if (init.method === 'GET' && url.pathname === `/api/products/${second._id}`) return refJson({ data: second })
+    })
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    const size = within(form).getByLabelText('Recipe size')
+    expect(within(size).getAllByRole('option').map(option => option.textContent)).toEqual(['Choose a supported size', 'S', 'L'])
+    await user.click(within(form).getByRole('button', { name: 'Select Different product' }))
+    await waitFor(() => expect(within(size).getAllByRole('option').map(option => option.textContent)).toEqual(['Choose a supported size', 'M']))
+    expect(size).toHaveProperty('value', '')
+    expect(within(form).getByLabelText('Quantity 1')).toHaveProperty('value', '0001.250000')
+    expect(within(form).getByLabelText('Selected Product UUID')).toHaveProperty('value', refOtherId)
+    expect(posts()).toHaveLength(0)
+  })
+
+  it('keeps the draft through closing, reopening, and section navigation', async () => {
+    const { user, posts } = lifecycleSetup()
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    await user.click(screen.getByRole('button', { name: 'Close recipe form' }))
+    expect(screen.queryByRole('form', { name: 'Create recipe' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'New recipe' }))
+    expect(screen.getByLabelText('Quantity 1')).toHaveProperty('value', '0001.250000')
+    await user.click(screen.getByRole('button', { name: 'Products' }))
+    await user.click(screen.getByRole('button', { name: 'Recipes' }))
+    const reopened = screen.getByRole('form', { name: 'Create recipe' })
+    expect(within(reopened).getByLabelText('Selected Product UUID')).toHaveProperty('value', refProductId)
+    expect(within(reopened).getByLabelText('Recipe size')).toHaveProperty('value', 'S')
+    expect(within(reopened).getByLabelText('Quantity 1')).toHaveProperty('value', '0001.250000')
+    expect(posts()).toHaveLength(0)
+  })
+
+  it('shows selected inactive reference details and warns without claiming activation eligibility', async () => {
+    const { user, posts } = lifecycleSetup((url, init) => {
+      if (init.method === 'GET' && url.pathname === '/api/ingredients' && url.searchParams.get('isActive') === 'false') return refPage([{ ...refIngredient, isActive: false }])
+      if (init.method === 'GET' && url.pathname === `/api/ingredients/${refIngredientId}`) return refJson({ data: { ...refIngredient, isActive: false } })
+    })
+    const form = await lifecycleOpen(user)
+    fireEvent.change(within(form).getByLabelText('Ingredient status'), { target: { value: 'false' } })
+    await user.click(within(form).getByRole('button', { name: 'Apply ingredient filters' }))
+    await user.click(await within(form).findByRole('button', { name: 'Add Picker milk' }))
+    const selected = within(form).getByRole('region', { name: 'Selected Ingredients' })
+    await within(selected).findByText('Picker milk')
+    expect(within(selected).getByText(/MILK.*Unit: ml.*Inactive/)).toBeTruthy()
+    expect(within(selected).getByText(refIngredientId)).toBeTruthy()
+    expect(within(selected).getByText('This Ingredient is inactive. This draft does not establish activation eligibility.')).toBeTruthy()
+    await user.click(within(selected).getByRole('button', { name: 'Remove Ingredient 1' }))
+    expect(within(selected).queryByLabelText('Quantity 1')).toBeNull()
+    expect(posts()).toHaveLength(0)
+  })
+
+  it('announces field errors, links them to inputs, and focuses the first invalid field without preflight or POST', async () => {
+    const { user, posts, gets } = lifecycleSetup()
+    const form = await lifecycleOpen(user)
+    const before = gets().length
+    lifecycleSubmit(form)
+    const product = within(form).getByLabelText('Selected Product UUID')
+    await waitFor(() => expect(product.getAttribute('aria-invalid')).toBe('true'))
+    expect(document.activeElement).toBe(product)
+    expect(document.getElementById(product.getAttribute('aria-describedby')!)?.textContent).toContain('valid UUID')
+    expect(within(form).getByText('Add at least one Ingredient.')).toBeTruthy()
+    expect(posts()).toHaveLength(0)
+    expect(gets().slice(before).filter(url => url.pathname.startsWith('/api/products/'))).toHaveLength(0)
+  })
+
+  it('refreshes selected references and all Product/size history before its single POST', async () => {
+    const history = Array.from({ length: 101 }, (_, i) => lifecycleVersion(i + 1, { ingredients: [] }))
+    const events: string[] = []
+    const { user, posts } = lifecycleSetup((url, init) => {
+      events.push(`${init.method} ${url.pathname}${url.search}`)
+      if (init.method === 'GET' && url.pathname === '/api/recipes' && url.searchParams.get('limit') === '100') return lifecycleHistory(history, url)
+      if (init.method === 'POST') return refJson({ data: lifecycleVersion(102, { ingredients: refRecipe.ingredients }) }, 201)
+    })
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    events.length = 0
+    lifecycleSubmit(form)
+    await screen.findByText(/Recipe version 102 created successfully/)
+    const postIndex = events.findIndex(event => event.startsWith('POST'))
+    expect(events.slice(0, postIndex).some(event => event.includes(`/api/products/${refProductId}`))).toBe(true)
+    expect(events.slice(0, postIndex).some(event => event.includes(`/api/ingredients/${refIngredientId}`))).toBe(true)
+    const histories = events.slice(0, postIndex).filter(event => event.includes('/api/recipes?'))
+    expect(histories).toHaveLength(2)
+    expect(histories[0]).toContain(`productId=${refProductId}&size=S&page=1&limit=100`)
+    expect(histories[1]).toContain('page=2&limit=100')
+    expect(histories.every(event => !event.includes('isActive'))).toBe(true)
+    expect(posts()).toHaveLength(1)
+  })
+
+  it.each(['product-not-found', 'ingredient-not-found', 'network', 'malformed-history', 'later-history-page'])('preserves the draft and sends no POST after %s preflight failure', async failure => {
+    let checking = false
+    const history = Array.from({ length: 101 }, (_, i) => lifecycleVersion(i + 1))
+    const { user, posts } = lifecycleSetup((url, init) => {
+      if (!checking || init.method !== 'GET') return
+      if (failure === 'product-not-found' && url.pathname === `/api/products/${refProductId}`) return refJson({ error: 'Not found' }, 404)
+      if (failure === 'ingredient-not-found' && url.pathname === `/api/ingredients/${refIngredientId}`) return refJson({ error: 'Not found' }, 404)
+      if (failure === 'network' && url.pathname === `/api/ingredients/${refIngredientId}`) throw new Error('mock network failure')
+      if (url.pathname === '/api/recipes' && url.searchParams.get('limit') === '100') {
+        if (failure === 'malformed-history') return refPage([refRecipe], 1, 2, 100)
+        if (failure === 'later-history-page') return url.searchParams.get('page') === '2' ? refJson({ error: 'Failed' }, 500) : lifecycleHistory(history, url)
+      }
+    })
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    checking = true
+    lifecycleSubmit(form)
+    await screen.findByText(/Preflight failed\. No creation request was sent/)
+    expect(within(form).getByLabelText('Quantity 1')).toHaveProperty('value', '0001.250000')
+    expect(within(form).getByLabelText('Selected Product UUID')).toHaveProperty('value', refProductId)
+    expect(posts()).toHaveLength(0)
+  })
+
+  it('blocks submission when refreshed Product details no longer support the chosen size', async () => {
+    let checking = false
+    const { user, posts } = lifecycleSetup((url, init) => checking && init.method === 'GET' && url.pathname === `/api/products/${refProductId}`
+      ? refJson({ data: { ...refProduct, prices: [{ size: 'M', price: '2' }] } }) : undefined)
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    checking = true
+    lifecycleSubmit(form)
+    await screen.findByText('This Product no longer supports the selected size. Choose a current size.')
+    expect(within(form).getByLabelText('Quantity 1')).toHaveProperty('value', '0001.250000')
+    expect(posts()).toHaveLength(0)
+    await waitFor(() => expect(within(within(form).getByLabelText('Recipe size')).getAllByRole('option').map(option => option.textContent)).toEqual(['Choose a supported size', 'M']))
+  })
+
+  it('takes a synchronous submission lock before preflight and keeps it through a pending POST', async () => {
+    let checking = false
+    const references = refDeferred<Response>(), post = refDeferred<Response>()
+    const { user, posts, fetch } = lifecycleSetup((url, init) => {
+      if (checking && init.method === 'GET' && url.pathname === `/api/products/${refProductId}`) return references.promise
+      if (init.method === 'POST') return post.promise
+    })
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    checking = true
+    lifecycleSubmit(form); lifecycleSubmit(form)
+    expect(screen.getByRole('button', { name: 'Checking references...' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Products' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Close recipe form' })).toHaveProperty('disabled', true)
+    expect(within(form).getByLabelText('Quantity 1').closest('fieldset.recipe-fields')).toHaveProperty('disabled', true)
+    expect(posts()).toHaveLength(0)
+    await act(async () => references.resolve(refJson({ data: refProduct })))
+    await waitFor(() => expect(posts()).toHaveLength(1))
+    lifecycleSubmit(form); lifecycleSubmit(form)
+    expect(screen.getByRole('button', { name: 'Creating recipe...' })).toHaveProperty('disabled', true)
+    expect(posts()).toHaveLength(1)
+    await act(async () => post.resolve(refJson({ data: refRecipe }, 201)))
+    await screen.findByText(/Recipe version 3 created successfully/)
+    expect(posts()).toHaveLength(1)
+    expect(fetch.mock.calls.every(([url, init]) => init?.method === 'GET' || (init?.method === 'POST' && String(url).endsWith('/api/recipes')))).toBe(true)
+  })
+
+  it.each(['network', 'timeout', 'server', 'malformed-success', 'unexpected-active', 'unexpected-quantity'])('preserves and locks the attempted draft on %s outcome without automatic retry', async failure => {
+    const pending = refDeferred<Response>()
+    const { user, posts } = lifecycleSetup((url, init) => {
+      if (init.method !== 'POST' || url.pathname !== '/api/recipes') return
+      if (failure === 'network') throw new Error('mock network failure')
+      if (failure === 'timeout') return pending.promise
+      if (failure === 'server') return refJson({ error: 'private SQL message' }, 500)
+      if (failure === 'malformed-success') return refJson({ data: { unexpected: true } }, 201)
+      if (failure === 'unexpected-active') return refJson({ data: { ...refRecipe, isActive: true } }, 201)
+      return refJson({ data: { ...refRecipe, ingredients: [{ ingredientId: refIngredientId, quantity: '1.250001' }] } }, 201)
+    }, failure === 'timeout' ? 150 : 5_000)
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    lifecycleSubmit(form)
+    await screen.findByRole('status', { name: 'Recipe outcome review' })
+    expect(within(form).getByLabelText('Quantity 1')).toHaveProperty('value', '0001.250000')
+    expect(within(form).getByRole('button', { name: 'Create recipe' })).toHaveProperty('disabled', true)
+    expect(screen.getByText('Creation outcome is unknown')).toBeTruthy()
+    expect(screen.queryByText('private SQL message')).toBeNull()
+    lifecycleSubmit(form); lifecycleSubmit(form)
+    expect(posts()).toHaveLength(1)
+    if (failure === 'timeout') await act(async () => pending.resolve(refJson({ data: refRecipe }, 201)))
+    expect(posts()).toHaveLength(1)
+    expect(screen.queryByLabelText(lifecycleAck)).toBeNull()
+  })
+
+  it.each([400, 404, 409])('preserves a rejected draft after HTTP %s and does not automatically retry', async status => {
+    const { user, posts } = lifecycleSetup((_url, init) => init.method === 'POST' ? refJson({ error: 'Backend rejected payload' }, status) : undefined)
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    lifecycleSubmit(form)
+    await waitFor(() => expect(posts()).toHaveLength(1))
+    await waitFor(() => expect(within(form).getByRole('button', { name: 'Create recipe' })).toHaveProperty('disabled', false))
+    expect(within(form).getByLabelText('Quantity 1')).toHaveProperty('value', '0001.250000')
+    expect(screen.queryByRole('status', { name: 'Recipe outcome review' })).toBeNull()
+    expect(posts()).toHaveLength(1)
+  })
+
+  it('reviews every history page, distinguishes observed versions, and requires acknowledgement before deliberate resubmission', async () => {
+    const old = lifecycleVersion(1)
+    const newMatch = lifecycleVersion(102, { productId: refProductId.toUpperCase(), ingredients: [{ ingredientId: refIngredientId.toUpperCase(), quantity: '1.25' }] })
+    const history = [old, ...Array.from({ length: 100 }, (_, i) => lifecycleVersion(i + 2, { ingredients: [] })), newMatch]
+    let reviewing = false, submissions = 0
+    const { user, posts, gets } = lifecycleSetup((url, init) => {
+      if (init.method === 'GET' && url.pathname === '/api/recipes' && url.searchParams.get('limit') === '100') return lifecycleHistory(reviewing ? history : [old], url)
+      if (init.method === 'POST') {
+        submissions++
+        return submissions === 1 ? refJson({ error: 'Unknown server failure' }, 500) : refJson({ data: lifecycleVersion(103) }, 201)
+      }
+      if (init.method === 'GET' && url.pathname === `/api/recipes/${lifecycleVersion(103)._id}`) return refJson({ data: lifecycleVersion(103) })
+    })
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    lifecycleSubmit(form)
+    const review = await screen.findByRole('status', { name: 'Recipe outcome review' })
+    expect(within(review).getByText(/Observed before submission: 1 versions/).textContent).toContain('v1')
+    expect(within(review).getByText('0001.250000')).toBeTruthy()
+    reviewing = true
+    await user.click(within(review).getByRole('button', { name: 'Refresh Recipe server state' }))
+    await screen.findByText('Reviewed 102 versions across all history pages, including active and inactive Recipes.')
+    expect(screen.getByText('Possible matching versions. A match does not prove this request created it.')).toBeTruthy()
+    expect(screen.getByText(/v1.*Observed before submission/)).toBeTruthy()
+    expect(screen.getByText(/v102.*Not observed before submission/)).toBeTruthy()
+    expect(gets().filter(url => url.pathname === '/api/recipes' && url.searchParams.get('limit') === '100' && url.searchParams.get('page') === '2')).toHaveLength(1)
+    expect(within(form).getByRole('button', { name: 'Submit recipe again' })).toHaveProperty('disabled', true)
+    lifecycleSubmit(form)
+    expect(posts()).toHaveLength(1)
+    await user.click(within(form).getByLabelText(lifecycleAck))
+    expect(within(form).getByRole('button', { name: 'Submit recipe again' })).toHaveProperty('disabled', false)
+    expect(posts()).toHaveLength(1)
+    await user.click(within(form).getByRole('button', { name: 'Submit recipe again' }))
+    await screen.findByText(/Recipe version 103 created successfully/)
+    expect(posts()).toHaveLength(2)
+    expect(JSON.parse(String(posts()[1][1]?.body))).toEqual(refPayload)
+  })
+
+  it('does not infer rollback from absent matches and retains the attempted payload when the draft changes', async () => {
+    const { user, posts, gets } = lifecycleSetup((_url, init) => init.method === 'POST' ? refJson({ error: 'Unknown' }, 500) : undefined)
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    lifecycleSubmit(form)
+    await screen.findByText('Creation outcome is unknown')
+    fireEvent.change(within(form).getByLabelText('Quantity 1'), { target: { value: '9.999999' } })
+    await user.click(within(form).getByRole('button', { name: 'Refresh Recipe server state' }))
+    await screen.findByText('No exact quantity/reference match was found. Absence does not prove the request was rolled back.')
+    const review = screen.getByRole('status', { name: 'Recipe outcome review' })
+    expect(within(review).getByText('0001.250000')).toBeTruthy()
+    expect(within(form).getByLabelText('Quantity 1')).toHaveProperty('value', '9.999999')
+    expect(gets().filter(url => url.pathname === '/api/recipes' && url.searchParams.get('limit') === '100').every(url => url.searchParams.get('productId') === refProductId && url.searchParams.get('size') === 'S')).toBe(true)
+    await user.click(within(form).getByLabelText(lifecycleAck))
+    fireEvent.change(within(form).getByLabelText('Quantity 1'), { target: { value: '10' } })
+    expect(within(form).getByLabelText(lifecycleAck)).toHaveProperty('checked', false)
+    expect(within(form).getByRole('button', { name: 'Submit recipe again' })).toHaveProperty('disabled', true)
+    expect(posts()).toHaveLength(1)
+  })
+
+  it('keeps an incomplete reconciliation blocked and does not reuse an earlier acknowledgement', async () => {
+    let rejectHistory = false
+    const { user, posts } = lifecycleSetup((url, init) => {
+      if (init.method === 'POST') return refJson({ error: 'Unknown' }, 500)
+      if (rejectHistory && url.pathname === '/api/recipes' && url.searchParams.get('limit') === '100') return refJson({ error: 'History unavailable' }, 500)
+    })
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    lifecycleSubmit(form)
+    await screen.findByText('Creation outcome is unknown')
+    await user.click(within(form).getByRole('button', { name: 'Refresh Recipe server state' }))
+    await screen.findByText(/Reviewed 0 versions/)
+    await user.click(within(form).getByLabelText(lifecycleAck))
+    rejectHistory = true
+    await user.click(within(form).getByRole('button', { name: 'Refresh Recipe server state' }))
+    await screen.findByText(/Server state could not be fully reviewed/)
+    expect(within(form).queryByLabelText(lifecycleAck)).toBeNull()
+    expect(within(form).getByRole('button', { name: 'Create recipe' })).toHaveProperty('disabled', true)
+    lifecycleSubmit(form)
+    expect(posts()).toHaveLength(1)
+  })
+
+  it('keeps prior uncertainty when an acknowledged resubmission fails preflight', async () => {
+    let failPreflight = false
+    const { user, posts } = lifecycleSetup((url, init) => {
+      if (init.method === 'POST') return refJson({ error: 'Unknown' }, 500)
+      if (failPreflight && url.pathname === `/api/products/${refProductId}`) return refJson({ error: 'Not found' }, 404)
+    })
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    lifecycleSubmit(form)
+    await screen.findByText('Creation outcome is unknown')
+    await user.click(within(form).getByRole('button', { name: 'Refresh Recipe server state' }))
+    await screen.findByText(/Reviewed 0 versions/)
+    await user.click(within(form).getByLabelText(lifecycleAck))
+    failPreflight = true
+    lifecycleSubmit(form)
+    await screen.findByText(/Preflight failed\. No creation request was sent/)
+    expect(within(form).getByRole('button', { name: 'Create recipe' })).toHaveProperty('disabled', true)
+    expect(within(form).queryByLabelText(lifecycleAck)).toBeNull()
+    expect(posts()).toHaveLength(1)
+  })
+
+  it('requires a fresh review after an acknowledged resubmission finds an unsupported size', async () => {
+    let unsupported = false
+    const { user, posts } = lifecycleSetup((url, init) => {
+      if (init.method === 'POST') return refJson({ error: 'Unknown' }, 500)
+      if (unsupported && url.pathname === `/api/products/${refProductId}`) return refJson({ data: { ...refProduct, prices: [{ size: 'M', price: '2' }] } })
+    })
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    lifecycleSubmit(form)
+    await screen.findByText('Creation outcome is unknown')
+    await user.click(within(form).getByRole('button', { name: 'Refresh Recipe server state' }))
+    await screen.findByText(/Reviewed 0 versions/)
+    await user.click(within(form).getByLabelText(lifecycleAck))
+    unsupported = true
+    lifecycleSubmit(form)
+    await screen.findByText('This Product no longer supports the selected size. Choose a current size.')
+    expect(within(form).queryByLabelText(lifecycleAck)).toBeNull()
+    expect(within(form).getByRole('button', { name: 'Create recipe' })).toHaveProperty('disabled', true)
+    expect(within(form).getByRole('button', { name: 'Refresh Recipe server state' })).toBeTruthy()
+    lifecycleSubmit(form)
+    expect(posts()).toHaveLength(1)
+  })
+
+  it.each([400, 409])('retains the original unknown attempt when a deliberate second POST returns HTTP %s', async status => {
+    let submissions = 0
+    const { user, posts } = lifecycleSetup((_url, init) => {
+      if (init.method === 'POST') return refJson({ error: 'Rejected' }, ++submissions === 1 ? 500 : status)
+    })
+    const form = await lifecycleOpen(user)
+    await lifecycleFill(user, form)
+    lifecycleSubmit(form)
+    await screen.findByText('Creation outcome is unknown')
+    await user.click(within(form).getByRole('button', { name: 'Refresh Recipe server state' }))
+    await screen.findByText(/Reviewed 0 versions/)
+    fireEvent.change(within(form).getByLabelText('Quantity 1'), { target: { value: '9.999999' } })
+    await user.click(within(form).getByLabelText(lifecycleAck))
+    lifecycleSubmit(form)
+    await waitFor(() => expect(posts()).toHaveLength(2))
+    await waitFor(() => expect(within(form).getByRole('button', { name: 'Create recipe' })).toHaveProperty('disabled', true))
+    expect(within(form).queryByLabelText(lifecycleAck)).toBeNull()
+    expect(within(screen.getByRole('status', { name: 'Recipe outcome review' })).getByText('0001.250000')).toBeTruthy()
+    expect(within(form).getByLabelText('Quantity 1')).toHaveProperty('value', '9.999999')
+    lifecycleSubmit(form)
+    expect(posts()).toHaveLength(2)
+  })
+
+  it('does not let a stale selected Product detail response replace a newer selection or its supported sizes', async () => {
+    const pending = refDeferred<Response>()
+    const second: Product = { ...refProduct, _id: refOtherId, name: 'Newer product', code: 'NEW', prices: [{ size: 'M', price: '2' }] }
+    const { user, posts } = lifecycleSetup((url, init) => {
+      if (init.method !== 'GET') return
+      if (url.pathname === '/api/products') return refPage([refProduct, second])
+      if (url.pathname === `/api/products/${refProductId}`) return pending.promise
+      if (url.pathname === `/api/products/${refOtherId}`) return refJson({ data: second })
+    })
+    const form = await lifecycleOpen(user)
+    await user.click(await within(form).findByRole('button', { name: 'Select Picker tea' }))
+    await within(form).findByText('Loading selected Product details...')
+    await user.click(within(form).getByRole('button', { name: 'Select Newer product' }))
+    const selected = within(form).getByRole('region', { name: 'Selected Product' })
+    await within(selected).findByText('Newer product')
+    await act(async () => pending.resolve(refJson({ data: refProduct })))
+    expect(within(selected).queryByText('Picker tea')).toBeNull()
+    expect(within(form).getByLabelText('Selected Product UUID')).toHaveProperty('value', refOtherId)
+    expect(within(within(form).getByLabelText('Recipe size')).getAllByRole('option').map(option => option.textContent)).toEqual(['Choose a supported size', 'M'])
+    expect(posts()).toHaveLength(0)
+  })
+})

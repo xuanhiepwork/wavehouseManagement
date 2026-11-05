@@ -77,13 +77,14 @@ function expectInvalid(form: HTMLElement, label: string) {
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 describe('creation payloads and successful lifecycle', () => {
-  it('offers creation for Ingredients and Products while Recipes remain read-only', async () => {
+  it('offers Catalog creation without activation, editing or deletion controls', async () => {
     const { user, posts } = setup()
     expect(await screen.findByRole('button', { name: 'New ingredient' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Products' }))
     expect(screen.getByRole('button', { name: 'New product' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Recipes' }))
-    expect(screen.queryByRole('button', { name: /new |create |activate|edit|delete/i })).toBeNull()
+    expect(screen.getByRole('button', { name: 'New recipe' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /activate|deactivate|edit|delete/i })).toBeNull()
     expect(posts()).toHaveLength(0)
   })
 

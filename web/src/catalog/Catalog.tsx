@@ -5,11 +5,14 @@ import CatalogCreation from './CatalogCreation'
 import { useCatalogCreation } from './useCatalogCreation'
 import type { CatalogCreationModel, CreationClient } from './useCatalogCreation'
 import { useCatalogRead } from './useCatalogRead'
+import RecipeCreation from './RecipeCreation'
+import { useRecipeCreation } from './useRecipeCreation'
+import type { RecipeCreationClient, RecipeCreationModel } from './useRecipeCreation'
 import './Catalog.css'
 
-// Recipe views only receive reads. Creation capabilities are limited to Ingredients and Products.
+// List/detail views receive reads only. Creation models expose no Recipe lifecycle actions.
 type ReadClient = { [K in keyof CatalogClient]: Pick<CatalogClient[K], 'list' | 'detail'> }
-type WorkspaceClient = ReadClient & CreationClient
+type WorkspaceClient = ReadClient & CreationClient & RecipeCreationClient
 type Section = keyof ReadClient
 type RecordItem = Ingredient | Product | Recipe
 const sections: Section[] = ['ingredients', 'products', 'recipes']
@@ -124,19 +127,23 @@ function DetailPanel({ client, section, id, reader, close }: { client: ReadClien
     {state.loading && <p className="feedback" role="status">Loading details…</p>}{state.error && <ErrorState message={state.error} retry={state.retry} />}{state.data && <RecordDetails item={state.data} reader={reader} />}
   </section>
 }
-function Workspace({ section, client, creation }: { section: Section; client: WorkspaceClient; creation?: CatalogCreationModel }) {
+function Workspace({ section, client, creation, recipeCreation }: { section: Section; client: WorkspaceClient; creation?: CatalogCreationModel; recipeCreation?: RecipeCreationModel }) {
   const [filters, setFilters] = useState(defaults)
   const [page, setPage] = useState(1)
   const [limit, setLimit] = useState(20)
   const [selected, setSelected] = useState<string>()
   const [notice, setNotice] = useState('')
+  const [detailRevision, setDetailRevision] = useState(0)
   const selectionButton = useRef<HTMLButtonElement | null>(null)
   const creationButton = useRef<HTMLButtonElement | null>(null)
   const creationWasVisible = useRef(false)
+  const creationOpenedDetails = useRef(false)
+  const creationVisible = Boolean(creation?.visible || recipeCreation?.visible)
   useEffect(() => {
-    if (creationWasVisible.current && !creation?.visible && !selected) creationButton.current?.focus()
-    creationWasVisible.current = Boolean(creation?.visible)
-  }, [creation?.visible, selected])
+    if (creationVisible) creationOpenedDetails.current = false
+    if (creationWasVisible.current && !creationVisible && !creationOpenedDetails.current) creationButton.current?.focus()
+    creationWasVisible.current = creationVisible
+  }, [creationVisible, selected])
   const load = useCallback(async (): Promise<PageEnvelope<RecordItem> & { reader: ReferenceReader }> => {
     const paging = { page, limit }
     const active = filters.status === '' ? undefined : filters.status === 'true'
@@ -158,11 +165,34 @@ function Workspace({ section, client, creation }: { section: Section; client: Wo
     setNotice(`${record.code} created successfully. Showing page 1 with your current filters; the new record may be hidden by those filters or appear on another page.`)
     state.retry()
   }
+  function refreshRecipes() { setDetailRevision(value => value + 1); state.retry() }
+  function recipeCreated(record: Recipe) {
+    creationOpenedDetails.current = true
+    selectionButton.current = null
+    setPage(1)
+    setSelected(record._id)
+    refreshRecipes()
+  }
+  function viewCreatedReference(id: string, close: () => void) {
+    creationOpenedDetails.current = true
+    selectionButton.current = null
+    setSelected(id)
+    setDetailRevision(value => value + 1)
+    close()
+  }
+  function closeDetails() {
+    setSelected(undefined)
+    if (selectionButton.current?.isConnected) selectionButton.current.focus()
+    else creationButton.current?.focus()
+  }
+  const action = creation ?? recipeCreation
   const title = titles[section]
   return <>
-    <header className="workspace-heading"><div><p className="eyebrow">Catalog / {title}</p><h1>{title}</h1><p className="muted">{descriptions[section]}</p></div>{creation ? <button ref={creationButton} className="primary-button" type="button" onClick={creation.open} disabled={creation.busy}>New {section === 'ingredients' ? 'ingredient' : 'product'}</button> : <span className="read-only">Read only</span>}</header>
+    <header className="workspace-heading"><div><p className="eyebrow">Catalog / {title}</p><h1>{title}</h1><p className="muted">{descriptions[section]}</p></div>{action && <button ref={creationButton} className="primary-button" type="button" onClick={action.open} disabled={action.busy}>New {section === 'ingredients' ? 'ingredient' : section === 'products' ? 'product' : 'recipe'}</button>}</header>
     {notice && <p className="creation-success" role="status">{notice}</p>}
-    {creation && <CatalogCreation model={creation} onCreated={created} onRefreshed={state.retry} onViewExisting={id => { setSelected(id); creation.close() }} />}
+    {creation && <CatalogCreation model={creation} onCreated={created} onRefreshed={state.retry} onViewExisting={id => viewCreatedReference(id, creation.close)} />}
+    {recipeCreation?.success && <p className="creation-success" role="status">Recipe version {recipeCreation.success.version} created successfully. Created as Inactive. Your current filters may hide the new version or place it on another page.</p>}
+    {recipeCreation && <RecipeCreation client={client} model={recipeCreation} onCreated={recipeCreated} onRefreshed={refreshRecipes} onViewRecipe={id => viewCreatedReference(id, recipeCreation.close)} />}
     <div className={`catalog-layout ${selected ? 'with-details' : ''}`}>
       <section className="list-panel surface" aria-label={`${title} directory`}>
         <div className="panel-heading"><div><h2>{title} directory</h2><p className="muted">{data ? `${data.pagination.total} records matching your filters` : 'Browse your catalog'}</p></div></div>
@@ -185,7 +215,7 @@ function Workspace({ section, client, creation }: { section: Section; client: Wo
           <span aria-live="polite">{data ? `Page ${data.pagination.page} of ${data.pagination.totalPages || 1}` : `Page ${page}`}</span><div><button type="button" disabled={page <= 1 || state.loading} onClick={() => changePage(page - 1)}>Previous</button><button type="button" disabled={!data || page >= data.pagination.totalPages || state.loading} onClick={() => changePage(page + 1)}>Next</button></div>
         </footer>
       </section>
-      {selected && reader && <DetailPanel key={selected} client={client} section={section} id={selected} reader={reader} close={() => { setSelected(undefined); selectionButton.current?.focus() }} />}
+      {selected && reader && <DetailPanel key={`${selected}:${detailRevision}`} client={client} section={section} id={selected} reader={reader} close={closeDetails} />}
     </div>
   </>
 }
@@ -193,12 +223,13 @@ export default function Catalog({ client }: { client: WorkspaceClient }) {
   const [section, setSection] = useState<Section>('ingredients')
   const ingredientCreation = useCatalogCreation('ingredients', client)
   const productCreation = useCatalogCreation('products', client)
-  const busy = ingredientCreation.busy || productCreation.busy
+  const recipeCreation = useRecipeCreation(client)
+  const busy = ingredientCreation.busy || productCreation.busy || recipeCreation.busy
   return <div className="catalog-shell"><a className="skip-link" href="#catalog-main">Skip to catalog</a>
     <aside className="sidebar"><div className="brand"><span className="brand-mark" aria-hidden="true">W</span><div>WaveHouse<span>MANAGEMENT</span></div></div><p className="nav-label">Workspace</p>
       <nav aria-label="Catalog sections">{sections.map((item, index) => <button type="button" key={item} aria-current={section === item ? 'page' : undefined} disabled={busy} onClick={() => setSection(item)}><span className="nav-symbol" aria-hidden="true">{['◫', '◇', '≋'][index]}</span>{titles[item]}</button>)}</nav>
       <div className="sidebar-note"><span className="sidebar-note-dot" aria-hidden="true" /><strong>Catalog workspace</strong><p>Ingredients, products<br />and the recipes that connect them.</p></div>
     </aside>
-    <div className="workspace"><div className="topbar"><span>Workspace <span aria-hidden="true">/</span> <strong>Catalog</strong></span><span className="workspace-label">WaveHouse Admin</span></div><main id="catalog-main" tabIndex={-1}><Workspace key={section} section={section} client={client} creation={section === 'ingredients' ? ingredientCreation : section === 'products' ? productCreation : undefined} /></main><footer className="workspace-footer">WaveHouse Management <span>Catalog · Browse &amp; create</span></footer></div>
+    <div className="workspace"><div className="topbar"><span>Workspace <span aria-hidden="true">/</span> <strong>Catalog</strong></span><span className="workspace-label">WaveHouse Admin</span></div><main id="catalog-main" tabIndex={-1}><Workspace key={section} section={section} client={client} creation={section === 'ingredients' ? ingredientCreation : section === 'products' ? productCreation : undefined} recipeCreation={section === 'recipes' ? recipeCreation : undefined} /></main><footer className="workspace-footer">WaveHouse Management <span>Catalog · Browse &amp; create</span></footer></div>
   </div>
 }
