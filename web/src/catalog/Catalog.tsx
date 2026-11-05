@@ -6,6 +6,8 @@ import { useCatalogCreation } from './useCatalogCreation'
 import type { CatalogCreationModel, CreationClient } from './useCatalogCreation'
 import { useCatalogRead } from './useCatalogRead'
 import RecipeCreation from './RecipeCreation'
+import RecipeHistory from './RecipeHistory'
+import type { RecipeHistoryContext } from './RecipeHistory'
 import { useRecipeCreation } from './useRecipeCreation'
 import type { RecipeCreationClient, RecipeCreationModel } from './useRecipeCreation'
 import './Catalog.css'
@@ -134,6 +136,12 @@ function Workspace({ section, client, creation, recipeCreation }: { section: Sec
   const [selected, setSelected] = useState<string>()
   const [notice, setNotice] = useState('')
   const [detailRevision, setDetailRevision] = useState(0)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyContext, setHistoryContext] = useState<RecipeHistoryContext>()
+  const [historyRevision, setHistoryRevision] = useState(0)
+  const [historyFocusRequest, setHistoryFocusRequest] = useState(0)
+  const historyButton = useRef<HTMLButtonElement | null>(null)
+  const historyOpener = useRef<HTMLButtonElement | null>(null)
   const selectionButton = useRef<HTMLButtonElement | null>(null)
   const creationButton = useRef<HTMLButtonElement | null>(null)
   const creationWasVisible = useRef(false)
@@ -165,13 +173,34 @@ function Workspace({ section, client, creation, recipeCreation }: { section: Sec
     setNotice(`${record.code} created successfully. Showing page 1 with your current filters; the new record may be hidden by those filters or appear on another page.`)
     state.retry()
   }
-  function refreshRecipes() { setDetailRevision(value => value + 1); state.retry() }
+  function refreshRecipes() {
+    setDetailRevision(value => value + 1)
+    setHistoryRevision(value => value + 1)
+    state.retry()
+  }
   function recipeCreated(record: Recipe) {
     creationOpenedDetails.current = true
     selectionButton.current = null
     setPage(1)
     setSelected(record._id)
+    setHistoryContext({ productId: record.productId, size: record.size })
+    setHistoryOpen(true)
     refreshRecipes()
+  }
+  function openHistory(button: HTMLButtonElement, recipe?: Recipe) {
+    historyOpener.current = button
+    if (recipe) setHistoryContext({ productId: recipe.productId, size: recipe.size })
+    setHistoryFocusRequest(value => value + 1)
+    setHistoryOpen(true)
+  }
+  function closeHistory() {
+    setHistoryOpen(false)
+    if (historyOpener.current?.isConnected) historyOpener.current.focus()
+    else historyButton.current?.focus()
+  }
+  function viewHistoryRecipe(id: string, button: HTMLButtonElement) {
+    select(id, button)
+    if (selected === id) setDetailRevision(value => value + 1)
   }
   function viewCreatedReference(id: string, close: () => void) {
     creationOpenedDetails.current = true
@@ -193,6 +222,9 @@ function Workspace({ section, client, creation, recipeCreation }: { section: Sec
     {creation && <CatalogCreation model={creation} onCreated={created} onRefreshed={state.retry} onViewExisting={id => viewCreatedReference(id, creation.close)} />}
     {recipeCreation?.success && <p className="creation-success" role="status">Recipe version {recipeCreation.success.version} created successfully. Created as Inactive. Your current filters may hide the new version or place it on another page.</p>}
     {recipeCreation && <RecipeCreation client={client} model={recipeCreation} onCreated={recipeCreated} onRefreshed={refreshRecipes} onViewRecipe={id => viewCreatedReference(id, recipeCreation.close)} />}
+    {section === 'recipes' && <button ref={historyButton} type="button" aria-expanded={historyOpen} onClick={event => openHistory(event.currentTarget)}>Browse recipe history</button>}
+    {section === 'recipes' && historyOpen && <RecipeHistory client={client} context={historyContext} revision={historyRevision} focusRequest={historyFocusRequest}
+      onContextChange={setHistoryContext} onViewRecipe={viewHistoryRecipe} close={closeHistory} />}
     <div className={`catalog-layout ${selected ? 'with-details' : ''}`}>
       <section className="list-panel surface" aria-label={`${title} directory`}>
         <div className="panel-heading"><div><h2>{title} directory</h2><p className="muted">{data ? `${data.pagination.total} records matching your filters` : 'Browse your catalog'}</p></div></div>
@@ -207,7 +239,8 @@ function Workspace({ section, client, creation, recipeCreation }: { section: Sec
             </tr></thead><tbody>{data.data.map(item => <tr key={item._id} className={selected === item._id ? 'selected-row' : ''}>
               {'name' in item ? <><th scope="row"><span className="record-name">{item.name}</span><span className="record-code">{item.code}</span></th><td>{item.category}</td>{'costPrice' in item ? <><td>{item.unit}</td><td className="decimal">{item.costPrice}</td><td className="decimal">{item.minStock}</td><td><Status active={item.isActive} /></td></> : <><td><Prices product={item} /></td><td><Status active={item.isAvailable} available /></td></>}</>
                 : <><th scope="row"><Reference kind="product" id={item.productId} reader={data.reader} /></th><td>{item.size}</td><td>v{item.version}</td><td><RecipeIngredients recipe={item} reader={data.reader} /></td><td><Status active={item.isActive} /></td></>}
-              <td><button className="text-button" type="button" aria-label={'name' in item ? `View ${item.name}` : `View recipe ${item.size} version ${item.version} for ${item.productId}`} aria-pressed={selected === item._id} onClick={e => select(item._id, e.currentTarget)}>View <span aria-hidden="true">↗</span></button></td>
+              <td><button className="text-button" type="button" aria-label={'name' in item ? `View ${item.name}` : `View recipe ${item.size} version ${item.version} for ${item.productId}`} aria-pressed={selected === item._id} onClick={e => select(item._id, e.currentTarget)}>View <span aria-hidden="true">↗</span></button>
+                {'ingredients' in item && <button className="text-button recipe-history-link" type="button" aria-label={`History for recipe ${item.size} version ${item.version} for ${item.productId}`} onClick={event => openHistory(event.currentTarget, item)}>History</button>}</td>
             </tr>)}</tbody></table>
           </div>)}
         </div>

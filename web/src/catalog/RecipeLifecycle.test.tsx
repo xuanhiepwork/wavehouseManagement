@@ -879,3 +879,481 @@ describe('Recipe creation integration', () => {
     expect(posts()).toHaveLength(0)
   })
 })
+
+function isHistoryRead(url: URL) {
+  return url.pathname === '/api/recipes' && url.searchParams.has('productId')
+    && url.searchParams.has('size') && !url.searchParams.has('isActive')
+    && url.searchParams.get('limit') === '20'
+}
+function isActiveHistoryRead(url: URL) {
+  return url.pathname === '/api/recipes' && url.searchParams.has('productId')
+    && url.searchParams.has('size') && url.searchParams.get('isActive') === 'true'
+    && !url.searchParams.has('page') && !url.searchParams.has('limit')
+}
+function historySetup(rows: Recipe[] = [refRecipe], handler?: LifecycleHandler) {
+  return lifecycleSetup((url, init) => {
+    const override = handler?.(url, init)
+    if (override !== undefined) return override
+    if (init.method !== 'GET') return
+    if (url.pathname === '/api/recipes') {
+      const filtered = rows.filter(row => (!url.searchParams.has('productId') || row.productId === url.searchParams.get('productId'))
+        && (!url.searchParams.has('size') || row.size === url.searchParams.get('size'))
+        && (!url.searchParams.has('isActive') || String(row.isActive) === url.searchParams.get('isActive')))
+      return lifecycleHistory(filtered, url)
+    }
+    const recipe = rows.find(row => url.pathname === `/api/recipes/${row._id}`)
+    if (recipe) return refJson({ data: recipe })
+  })
+}
+async function historyOpen(user: ReturnType<typeof userEvent.setup>, recipe?: Recipe) {
+  await user.click(screen.getByRole('button', { name: 'Recipes' }))
+  const opener = recipe
+    ? await screen.findByRole('button', { name: `History for recipe ${recipe.size} version ${recipe.version} for ${recipe.productId}` })
+    : screen.getByRole('button', { name: 'Browse recipe history' })
+  await user.click(opener)
+  return { panel: screen.getByRole('region', { name: 'Recipe version history' }), opener }
+}
+async function historyChoose(panel: HTMLElement, productId = refProductId, size = 'S') {
+  await waitFor(() => expect(within(within(panel).getByLabelText('History Product')).getByRole('option', { name: /Picker tea/ })).toBeTruthy())
+  fireEvent.change(within(panel).getByLabelText('History Product'), { target: { value: productId } })
+  await waitFor(() => expect(within(panel).getByLabelText('History size')).toHaveProperty('disabled', false))
+  fireEvent.change(within(panel).getByLabelText('History size'), { target: { value: size } })
+}
+
+describe('Recipe version history', () => {
+  it('opens contextual history, retains backend order and exact data, and resolves current inactive metadata', async () => {
+    const rows = [lifecycleVersion(8, { ingredients: [{ ingredientId: refIngredientId, quantity: '999999999999.999999' }] }),
+      lifecycleVersion(2, { isActive: true }), lifecycleVersion(5)]
+    const currentIngredient = { ...refIngredient, name: 'Current renamed milk', code: 'CURRENT-MILK', unit: 'g', isActive: false }
+    const { user, gets, fetch, posts } = historySetup(rows, (url, init) => {
+      if (init.method === 'GET' && url.pathname === `/api/products/${refProductId}`) return refJson({ data: { ...refProduct, isAvailable: false } })
+      if (init.method === 'GET' && url.pathname === `/api/ingredients/${refIngredientId}`) return refJson({ data: currentIngredient })
+    })
+    const { panel } = await historyOpen(user, rows[0])
+    const card = await within(panel).findByLabelText('History version 8')
+    await within(card).findByText('Current renamed milk')
+    expect(within(panel).getByLabelText('History Product')).toHaveProperty('value', refProductId)
+    expect(within(panel).getByLabelText('History size')).toHaveProperty('value', 'S')
+    expect(within(panel).getAllByLabelText(/^History version /).map(item => item.getAttribute('aria-label')))
+      .toEqual(['History version 8', 'History version 2', 'History version 5'])
+    expect(within(card).getByText(rows[0]._id)).toBeTruthy()
+    expect(within(card).getByText(refIngredientId)).toBeTruthy()
+    expect(within(card).getByText('999999999999.999999').textContent).toBe('999999999999.999999')
+    expect(card.textContent).toContain('CURRENT-MILK')
+    expect(panel.textContent).toMatch(/current reference metadata/i)
+    expect(card.textContent).toContain('Current unit: g')
+    expect(card.textContent).toContain('Inactive')
+    expect(card.textContent).toContain(refMetadata.createdAt)
+    expect(card.textContent).toContain(refMetadata.updatedAt)
+    expect(within(panel).getByLabelText('History version 2').textContent).toContain('Active')
+    const summary = within(panel).getByRole('region', { name: 'Current active Recipe' })
+    expect(await within(summary).findByText(/Current active Recipe: v2$/)).toBeTruthy()
+    const historyReads = gets().filter(isHistoryRead)
+    expect(historyReads).toHaveLength(1)
+    expect(Object.fromEntries(historyReads[0].searchParams)).toEqual({ productId: refProductId, size: 'S', page: '1', limit: '20' })
+    expect(gets().filter(isActiveHistoryRead)).toHaveLength(1)
+    expect(posts()).toHaveLength(0)
+    expect(fetch.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true)
+    expect(within(panel).queryByRole('button', { name: /activate|deactivate/i })).toBeNull()
+  })
+
+  it('allows unavailable Products and offers only sizes resolved through current Product details', async () => {
+    const unavailable = { ...refProduct, isAvailable: false, prices: [{ size: 'L', price: '3' }, { size: 'S', price: '1' }] }
+    const { user, gets, posts } = historySetup([], (url, init) => {
+      if (init.method !== 'GET') return
+      if (url.pathname === '/api/products') return refPage([{ ...unavailable, prices: [{ size: 'M', price: '2' }] }])
+      if (url.pathname === `/api/products/${refProductId}`) return refJson({ data: unavailable })
+    })
+    const { panel } = await historyOpen(user)
+    expect(gets().filter(isHistoryRead)).toHaveLength(0)
+    await historyChoose(panel)
+    await waitFor(() => expect(within(within(panel).getByLabelText('History size')).getAllByRole('option')
+      .map(option => (option as HTMLOptionElement).value).filter(Boolean)).toEqual(['S', 'L']))
+    expect(gets().some(url => url.pathname === `/api/products/${refProductId}`)).toBe(true)
+    expect(gets().filter(url => url.pathname === '/api/products').every(url => !url.searchParams.has('isAvailable'))).toBe(true)
+    expect(await within(panel).findByText(/No (?:Recipe |recipe )?(?:version |versions |history )?(?:found|history|exists|yet)/i)).toBeTruthy()
+    expect(posts()).toHaveLength(0)
+  })
+
+  it('paginates independently from the directory and resets history to page one on size changes', async () => {
+    const rows = Array.from({ length: 45 }, (_, index) => lifecycleVersion(index + 1))
+    const { user, gets } = historySetup(rows)
+    await user.click(screen.getByRole('button', { name: 'Recipes' }))
+    const directory = screen.getByRole('region', { name: 'Recipes directory' })
+    await within(directory).findByText('Page 1 of 3')
+    await user.click(within(directory).getByRole('button', { name: 'Next' }))
+    await within(directory).findByText('Page 2 of 3')
+    await user.click(within(directory).getByRole('button', { name: `History for recipe S version 21 for ${refProductId}` }))
+    const panel = screen.getByRole('region', { name: 'Recipe version history' })
+    await within(panel).findByLabelText('History version 1')
+    const before = gets().filter(url => url.pathname === '/api/recipes' && !url.searchParams.has('productId')).length
+    await user.click(within(panel).getByRole('button', { name: 'Next history page' }))
+    await within(panel).findByLabelText('History version 21')
+    expect(within(panel).queryByLabelText('History version 1')).toBeNull()
+    expect(within(directory).getByText('Page 2 of 3')).toBeTruthy()
+    expect(gets().filter(url => url.pathname === '/api/recipes' && !url.searchParams.has('productId'))).toHaveLength(before)
+    const pagination = within(panel).getByLabelText('Recipe history pagination')
+    expect(pagination.textContent).toMatch(/page 2 of 3/i)
+    await user.click(within(directory).getByRole('button', { name: 'Next' }))
+    await within(directory).findByText('Page 3 of 3')
+    expect(pagination.textContent).toMatch(/page 2 of 3/i)
+    fireEvent.change(within(panel).getByLabelText('History size'), { target: { value: 'L' } })
+    await waitFor(() => expect(gets().filter(isHistoryRead).at(-1)?.searchParams.get('size')).toBe('L'))
+    expect(gets().filter(isHistoryRead).at(-1)?.searchParams.get('page')).toBe('1')
+    expect(within(panel).getByRole('button', { name: 'Previous history page' })).toHaveProperty('disabled', true)
+    expect(within(directory).getByText('Page 3 of 3')).toBeTruthy()
+  })
+
+  it('clears the old size and resets pagination when the selected Product changes', async () => {
+    const rows = Array.from({ length: 21 }, (_, index) => lifecycleVersion(index + 1))
+    const second: Product = { ...refProduct, _id: refOtherId, code: 'SECOND', name: 'Second history Product', prices: [{ size: 'M', price: '2' }] }
+    const { user, gets } = historySetup(rows, (url, init) => {
+      if (init.method !== 'GET') return
+      if (url.pathname === '/api/products') return refPage([refProduct, second])
+      if (url.pathname === `/api/products/${refOtherId}`) return refJson({ data: second })
+    })
+    const { panel } = await historyOpen(user, rows[0])
+    await within(panel).findByLabelText('History version 1')
+    await user.click(within(panel).getByRole('button', { name: 'Next history page' }))
+    await within(panel).findByLabelText('History version 21')
+    fireEvent.change(within(panel).getByLabelText('History Product'), { target: { value: refOtherId } })
+    await waitFor(() => expect(within(within(panel).getByLabelText('History size')).getAllByRole('option')
+      .map(option => (option as HTMLOptionElement).value).filter(Boolean)).toEqual(['M']))
+    expect(within(panel).getByLabelText('History size')).toHaveProperty('value', '')
+    expect(within(panel).queryByLabelText('History version 21')).toBeNull()
+    fireEvent.change(within(panel).getByLabelText('History size'), { target: { value: 'M' } })
+    await waitFor(() => expect(gets().filter(isHistoryRead).at(-1)?.searchParams.get('productId')).toBe(refOtherId))
+    expect(gets().filter(isHistoryRead).at(-1)?.searchParams.get('page')).toBe('1')
+    expect(gets().filter(isHistoryRead).at(-1)?.searchParams.get('size')).toBe('M')
+  })
+
+  it('shows the independently retrieved active version outside the history page without assuming the highest is active', async () => {
+    const shown = lifecycleVersion(99), active = lifecycleVersion(2, { isActive: true })
+    const otherRows = Array.from({ length: 19 }, (_, index) => lifecycleVersion(index + 10))
+    const { user, gets } = historySetup([shown], (url, init) => {
+      if (init.method !== 'GET') return
+      if (isHistoryRead(url)) return refPage([shown, ...otherRows], 1, 21, 20)
+      if (isActiveHistoryRead(url)) return refPage([active])
+    })
+    const { panel } = await historyOpen(user, shown)
+    await within(panel).findByLabelText('History version 99')
+    const summary = within(panel).getByRole('region', { name: 'Current active Recipe' })
+    await waitFor(() => expect(summary.textContent).toContain(active._id))
+    expect(within(summary).getByText(/Current active Recipe: v2$/)).toBeTruthy()
+    expect(summary.textContent).not.toContain(shown._id)
+    expect(within(panel).queryByLabelText('History version 2')).toBeNull()
+    expect(gets().filter(isActiveHistoryRead).map(url => Object.fromEntries(url.searchParams)))
+      .toEqual([{ productId: refProductId, size: 'S', isActive: 'true' }])
+  })
+
+  it('announces no active Recipe independently of an inactive version history', async () => {
+    const { user } = historySetup([lifecycleVersion(99)])
+    const { panel } = await historyOpen(user, lifecycleVersion(99))
+    await within(panel).findByLabelText('History version 99')
+    const summary = within(panel).getByRole('region', { name: 'Current active Recipe' })
+    expect(await within(summary).findByText(/No (?:Recipe is currently active|active Recipe|active recipe)/i)).toBeTruthy()
+    expect(summary.textContent).not.toContain(lifecycleVersion(99)._id)
+  })
+
+  it('accepts empty historical membership with an explanation while retaining the version and its timestamps', async () => {
+    const empty = lifecycleVersion(4, { ingredients: [] })
+    const { user, posts } = historySetup([empty])
+    const { panel } = await historyOpen(user, empty)
+    const card = await within(panel).findByLabelText('History version 4')
+    expect(within(card).getByText(/no ingredient|empty.*ingredient/i)).toBeTruthy()
+    expect(card.textContent).toContain(empty._id)
+    expect(card.textContent).toContain(empty.createdAt)
+    expect(card.textContent).toContain(empty.updatedAt)
+    expect(within(panel).queryByRole('alert')).toBeNull()
+    expect(posts()).toHaveLength(0)
+  })
+
+  it.each(['multiple', 'inactive', 'wrong-product', 'wrong-size', 'count-mismatch'])('rejects %s active summaries without hiding valid history', async inconsistency => {
+    const active = lifecycleVersion(1, { isActive: true })
+    const activeRows = inconsistency === 'multiple' ? [active, lifecycleVersion(2, { isActive: true })]
+      : [{ ...active, ...(inconsistency === 'inactive' ? { isActive: false }
+        : inconsistency === 'wrong-product' ? { productId: refOtherId } : { size: 'L' as const }) }]
+    const { user, posts } = historySetup([refRecipe], (url, init) => init.method === 'GET' && isActiveHistoryRead(url)
+      ? refPage(inconsistency === 'count-mismatch' ? [] : activeRows, 1, inconsistency === 'count-mismatch' ? 1 : activeRows.length) : undefined)
+    const { panel } = await historyOpen(user, refRecipe)
+    await within(panel).findByLabelText('History version 3')
+    const summary = within(panel).getByRole('region', { name: 'Current active Recipe' })
+    expect(await within(summary).findByRole('alert')).toBeTruthy()
+    expect(within(summary).getByRole('button', { name: 'Retry active version' })).toBeTruthy()
+    expect(summary.textContent).not.toContain(active._id)
+    expect(posts()).toHaveLength(0)
+  })
+
+  it.each(['wrong-product', 'wrong-size', 'duplicate-id', 'duplicate-version', 'wrong-page', 'wrong-limit', 'short-page'])(
+    'rejects %s history responses while leaving the independent active result readable', async inconsistency => {
+      const active = lifecycleVersion(1, { isActive: true })
+      const { user, posts } = historySetup([refRecipe], (url, init) => {
+        if (init.method !== 'GET') return
+        if (isActiveHistoryRead(url)) return refPage([active])
+        if (!isHistoryRead(url)) return
+        if (inconsistency === 'wrong-product') return refPage([{ ...refRecipe, productId: refOtherId }], 1, 1, 20)
+        if (inconsistency === 'wrong-size') return refPage([{ ...refRecipe, size: 'L' }], 1, 1, 20)
+        if (inconsistency === 'duplicate-id') return refPage([refRecipe, refRecipe], 1, 2, 20)
+        if (inconsistency === 'duplicate-version') return refPage([refRecipe, lifecycleVersion(3)], 1, 2, 20)
+        if (inconsistency === 'wrong-page') return refPage([refRecipe], 2, 1, 20)
+        if (inconsistency === 'wrong-limit') return refPage([refRecipe], 1, 1, 10)
+        return refPage([refRecipe], 1, 2, 20)
+      })
+      const { panel } = await historyOpen(user, refRecipe)
+      expect(await within(panel).findByRole('button', { name: 'Retry history' })).toBeTruthy()
+      expect(within(panel).queryByLabelText('History version 3')).toBeNull()
+      const summary = within(panel).getByRole('region', { name: 'Current active Recipe' })
+      await waitFor(() => expect(summary.textContent).toContain(active._id))
+      expect(within(summary).queryByRole('alert')).toBeNull()
+      expect(posts()).toHaveLength(0)
+    },
+  )
+
+  it('reports an active version missing from complete history and clears the warning after fresh agreeing reads', async () => {
+    const active = lifecycleVersion(1, { isActive: true })
+    let changed = false
+    const { user, gets, fetch } = historySetup([refRecipe], (url, init) => {
+      if (init.method !== 'GET') return
+      if (isActiveHistoryRead(url)) return refPage([active])
+      if (isHistoryRead(url)) return lifecycleHistory(changed ? [refRecipe, active] : [refRecipe], url)
+    })
+    const { panel } = await historyOpen(user, refRecipe)
+    await within(panel).findByLabelText('History version 3')
+    const warning = await within(panel).findByRole('alert')
+    expect(warning.textContent).toContain('Current active status cannot be confirmed')
+    expect(within(panel).queryByText('Current active version', { selector: 'strong' })).toBeNull()
+    const before = gets().length
+    changed = true
+    await user.click(within(panel).getByRole('button', { name: 'Refresh history and active version' }))
+    const activeCard = await within(panel).findByLabelText('History version 1')
+    await within(activeCard).findByText('Current active version')
+    expect(within(panel).queryByRole('alert')).toBeNull()
+    expect(gets().slice(before).filter(isHistoryRead)).toHaveLength(1)
+    expect(gets().slice(before).filter(isActiveHistoryRead)).toHaveLength(1)
+    expect(fetch.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true)
+  })
+
+  it('reports disagreement between active flags and the independently retrieved no-active state', async () => {
+    const row = lifecycleVersion(3, { isActive: true })
+    const { user } = historySetup([row], (url, init) => init.method === 'GET' && isActiveHistoryRead(url) ? refPage([]) : undefined)
+    const { panel } = await historyOpen(user, row)
+    const card = await within(panel).findByLabelText('History version 3')
+    expect((await within(panel).findByRole('alert')).textContent).toContain('reads disagree')
+    expect(card.textContent).toContain('Active at history read')
+    expect(within(card).queryByText('Current active version')).toBeNull()
+    const summary = within(panel).getByRole('region', { name: 'Current active Recipe' })
+    expect(summary.textContent).toContain('reported no active Recipe; history disagrees')
+  })
+
+  it('keeps history and active failures independent and retries only the requested read', async () => {
+    let failHistory = true, failActive = false
+    const active = lifecycleVersion(1, { isActive: true })
+    const { user, gets } = historySetup([refRecipe], (url, init) => {
+      if (init.method !== 'GET') return
+      if (isHistoryRead(url) && failHistory) return refJson({ error: 'private SQL history error' }, 500)
+      if (isActiveHistoryRead(url)) return failActive ? refJson({ error: 'private SQL active error' }, 500)
+        : refPage([{ ...active, size: url.searchParams.get('size') as Recipe['size'] }])
+    })
+    const { panel } = await historyOpen(user, refRecipe)
+    await within(panel).findByRole('button', { name: 'Retry history' })
+    let summary = within(panel).getByRole('region', { name: 'Current active Recipe' })
+    await waitFor(() => expect(summary.textContent).toContain(active._id))
+    expect(panel.textContent).not.toContain('private SQL')
+    const activeBefore = gets().filter(isActiveHistoryRead).length
+    failHistory = false
+    await user.click(within(panel).getByRole('button', { name: 'Retry history' }))
+    await within(panel).findByLabelText('History version 3')
+    expect(gets().filter(isActiveHistoryRead)).toHaveLength(activeBefore)
+    failActive = true
+    fireEvent.change(within(panel).getByLabelText('History size'), { target: { value: 'L' } })
+    summary = within(panel).getByRole('region', { name: 'Current active Recipe' })
+    await within(summary).findByRole('button', { name: 'Retry active version' })
+    const historyBefore = gets().filter(isHistoryRead).length
+    failActive = false
+    await user.click(within(summary).getByRole('button', { name: 'Retry active version' }))
+    await waitFor(() => expect(summary.textContent).toContain(active._id))
+    expect(within(summary).queryByRole('alert')).toBeNull()
+    expect(gets().filter(isHistoryRead)).toHaveLength(historyBefore)
+    expect(panel.textContent).not.toContain('private SQL')
+  })
+
+  it('preserves raw UUIDs and exact quantities when references fail, with independent read retries', async () => {
+    let failProduct = true, failIngredient = true
+    const { user, gets, posts } = historySetup([refRecipe], (url, init) => {
+      if (init.method !== 'GET') return
+      if (url.pathname === `/api/products/${refProductId}` && failProduct) return refJson({ error: 'hidden product database detail' }, 500)
+      if (url.pathname === `/api/ingredients/${refIngredientId}` && failIngredient) return refJson({ error: 'hidden ingredient database detail' }, 500)
+    })
+    const { panel } = await historyOpen(user, refRecipe)
+    const card = await within(panel).findByLabelText('History version 3')
+    await within(panel).findByRole('button', { name: 'Retry Product details' })
+    await within(card).findByRole('button', { name: `Retry Ingredient ${refIngredientId}` })
+    expect(panel.textContent).toContain(refProductId)
+    expect(within(card).getByText(refIngredientId)).toBeTruthy()
+    expect(within(card).getByText('1.25')).toBeTruthy()
+    expect(panel.textContent).not.toContain('database detail')
+    const historiesBefore = gets().filter(isHistoryRead).length
+    const ingredientBefore = gets().filter(url => url.pathname === `/api/ingredients/${refIngredientId}`).length
+    failProduct = false
+    await user.click(within(panel).getByRole('button', { name: 'Retry Product details' }))
+    await waitFor(() => expect(within(panel).queryByRole('button', { name: 'Retry Product details' })).toBeNull())
+    expect(gets().filter(isHistoryRead)).toHaveLength(historiesBefore)
+    expect(gets().filter(url => url.pathname === `/api/ingredients/${refIngredientId}`)).toHaveLength(ingredientBefore)
+    const productBefore = gets().filter(url => url.pathname === `/api/products/${refProductId}`).length
+    failIngredient = false
+    await user.click(within(card).getByRole('button', { name: `Retry Ingredient ${refIngredientId}` }))
+    await within(card).findByText('Picker milk')
+    expect(gets().filter(url => url.pathname === `/api/products/${refProductId}`)).toHaveLength(productBefore)
+    expect(gets().filter(isHistoryRead)).toHaveLength(historiesBefore)
+    expect(posts()).toHaveLength(0)
+  })
+
+  it.each(['success', 'failure'])('ignores stale history and active %s responses after the size changes', async outcome => {
+    const oldHistory = refDeferred<Response>(), oldActive = refDeferred<Response>()
+    const current = lifecycleVersion(7, { size: 'L' }), active = lifecycleVersion(2, { size: 'L', isActive: true })
+    const { user } = historySetup([refRecipe], (url, init) => {
+      if (init.method !== 'GET') return
+      if (isHistoryRead(url)) return url.searchParams.get('size') === 'S' ? oldHistory.promise : refPage([current, active], 1, 2, 20)
+      if (isActiveHistoryRead(url)) return url.searchParams.get('size') === 'S' ? oldActive.promise : refPage([active])
+    })
+    const { panel } = await historyOpen(user, refRecipe)
+    await waitFor(() => expect(within(panel).getByLabelText('History size')).toHaveProperty('disabled', false))
+    fireEvent.change(within(panel).getByLabelText('History size'), { target: { value: 'L' } })
+    await within(panel).findByLabelText('History version 7')
+    const summary = within(panel).getByRole('region', { name: 'Current active Recipe' })
+    await waitFor(() => expect(summary.textContent).toContain(active._id))
+    await act(async () => {
+      if (outcome === 'success') {
+        oldHistory.resolve(refPage([lifecycleVersion(90)], 1, 1, 20))
+        oldActive.resolve(refPage([lifecycleVersion(91, { isActive: true })]))
+      } else {
+        oldHistory.reject(new Error('late history failure'))
+        oldActive.reject(new Error('late active failure'))
+      }
+    })
+    expect(within(panel).getByLabelText('History version 7')).toBeTruthy()
+    expect(within(panel).queryByLabelText('History version 90')).toBeNull()
+    expect(summary.textContent).toContain(active._id)
+    expect(summary.textContent).not.toContain(lifecycleVersion(91)._id)
+    expect(within(panel).queryByRole('alert')).toBeNull()
+  })
+
+  it('ignores stale Product detail responses and retains the newer supported sizes', async () => {
+    const pending = refDeferred<Response>()
+    const second: Product = { ...refProduct, _id: refOtherId, name: 'New history Product', code: 'NEW-HISTORY', prices: [{ size: 'M', price: '2' }] }
+    const { user } = historySetup([], (url, init) => {
+      if (init.method !== 'GET') return
+      if (url.pathname === '/api/products') return refPage([refProduct, second])
+      if (url.pathname === `/api/products/${refProductId}`) return pending.promise
+      if (url.pathname === `/api/products/${refOtherId}`) return refJson({ data: second })
+    })
+    const { panel } = await historyOpen(user)
+    const product = within(panel).getByLabelText('History Product')
+    await within(product).findByRole('option', { name: /Picker tea/ })
+    fireEvent.change(product, { target: { value: refProductId } })
+    fireEvent.change(product, { target: { value: refOtherId } })
+    const sizes = await within(panel).findByLabelText('History size')
+    await waitFor(() => expect(within(sizes).getAllByRole('option').map(option => (option as HTMLOptionElement).value).filter(Boolean)).toEqual(['M']))
+    await act(async () => pending.resolve(refJson({ data: { ...refProduct, name: 'Stale history Product' } })))
+    expect(product).toHaveProperty('value', refOtherId)
+    expect(within(sizes).getAllByRole('option').map(option => (option as HTMLOptionElement).value).filter(Boolean)).toEqual(['M'])
+    expect(panel.textContent).not.toContain('Stale history Product')
+  })
+
+  it('ignores stale Ingredient metadata when a new history context replaces its membership', async () => {
+    const pending = refDeferred<Response>()
+    const newer = lifecycleVersion(7, { size: 'L', ingredients: [{ ingredientId: refOtherId, quantity: '0.000001' }] })
+    const { user } = historySetup([refRecipe], (url, init) => {
+      if (init.method !== 'GET') return
+      if (isHistoryRead(url) && url.searchParams.get('size') === 'L') return refPage([newer], 1, 1, 20)
+      if (url.pathname === `/api/ingredients/${refIngredientId}`) return pending.promise
+    })
+    const { panel } = await historyOpen(user, refRecipe)
+    await within(panel).findByLabelText('History version 3')
+    await waitFor(() => expect(within(panel).getByLabelText('History size')).toHaveProperty('disabled', false))
+    fireEvent.change(within(panel).getByLabelText('History size'), { target: { value: 'L' } })
+    const card = await within(panel).findByLabelText('History version 7')
+    await within(card).findByText('Picker sugar')
+    await act(async () => pending.resolve(refJson({ data: { ...refIngredient, name: 'Stale historical Ingredient' } })))
+    expect(panel.textContent).not.toContain('Stale historical Ingredient')
+    expect(within(panel).queryByLabelText('History version 3')).toBeNull()
+    expect(within(card).getByText('0.000001')).toBeTruthy()
+  })
+
+  it('refreshes and resets affected history after confirmed creation while preserving directory filters', async () => {
+    const rows = Array.from({ length: 21 }, (_, index) => lifecycleVersion(index + 1))
+    const created = lifecycleVersion(22), active = lifecycleVersion(1, { isActive: true })
+    let confirmed = false
+    const { user, gets, posts } = lifecycleSetup((url, init) => {
+      if (init.method === 'POST') { confirmed = true; return refJson({ data: created }, 201) }
+      if (init.method !== 'GET') return
+      if (isActiveHistoryRead(url)) return refPage([active])
+      if (url.pathname === '/api/recipes') return lifecycleHistory(confirmed ? [created, ...rows] : rows, url)
+      if (url.pathname === `/api/recipes/${created._id}`) return refJson({ data: created })
+    })
+    const { panel } = await historyOpen(user)
+    await historyChoose(panel)
+    await within(panel).findByLabelText('History version 1')
+    await user.click(within(panel).getByRole('button', { name: 'Next history page' }))
+    await within(panel).findByLabelText('History version 21')
+    const directory = screen.getByRole('region', { name: 'Recipes directory' })
+    fireEvent.change(within(directory).getByLabelText('Status'), { target: { value: 'false' } })
+    fireEvent.change(within(directory).getByLabelText('Rows per page'), { target: { value: '10' } })
+    await user.click(within(directory).getByRole('button', { name: 'Apply filters' }))
+    await user.click(screen.getByRole('button', { name: 'New recipe' }))
+    const form = screen.getByRole('form', { name: 'Create recipe' })
+    await lifecycleFill(user, form)
+    const before = gets().length
+    lifecycleSubmit(form)
+    await screen.findByText(/Recipe version 22 created successfully/)
+    const refreshed = screen.getByRole('region', { name: 'Recipe version history' })
+    await within(refreshed).findByLabelText('History version 22')
+    expect(within(refreshed).getByLabelText('Recipe history pagination').textContent).toMatch(/page 1 of 2/i)
+    expect(within(refreshed).getByLabelText('History Product')).toHaveProperty('value', refProductId)
+    expect(within(refreshed).getByLabelText('History size')).toHaveProperty('value', 'S')
+    expect(gets().slice(before).filter(isHistoryRead).at(-1)?.searchParams.get('page')).toBe('1')
+    expect(gets().slice(before).some(isActiveHistoryRead)).toBe(true)
+    expect(gets().slice(before).some(url => url.pathname === `/api/recipes/${created._id}`)).toBe(true)
+    expect(gets().slice(before).some(url => url.pathname === '/api/recipes' && url.searchParams.get('limit') === '10'
+      && url.searchParams.get('isActive') === 'false')).toBe(true)
+    expect(within(directory).getByLabelText('Status')).toHaveProperty('value', 'false')
+    expect(posts()).toHaveLength(1)
+    const details = screen.getByRole('region', { name: 'Record details' })
+    await within(details).findByText(created._id)
+  })
+
+  it.each(['global', 'contextual'])('provides accessible %s controls and restores opening focus without mutation', async entry => {
+    const { user, fetch } = historySetup([refRecipe])
+    const { panel, opener } = await historyOpen(user, entry === 'contextual' ? refRecipe : undefined)
+    expect(document.activeElement).toBe(within(panel).getByRole('heading', { name: 'Recipe version history' }))
+    expect(within(panel).getByRole('combobox', { name: 'History Product' })).toBeTruthy()
+    if (entry === 'global') await historyChoose(panel)
+    else await within(panel).findByLabelText('History size')
+    expect(within(panel).getByRole('combobox', { name: 'History size' })).toBeTruthy()
+    expect(within(panel).getByRole('button', { name: 'Previous history page' })).toBeTruthy()
+    expect(within(panel).getByRole('button', { name: 'Next history page' })).toBeTruthy()
+    await user.click(within(panel).getByRole('button', { name: 'Close recipe history' }))
+    expect(screen.queryByRole('region', { name: 'Recipe version history' })).toBeNull()
+    expect(document.activeElement).toBe(opener)
+    expect(fetch.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true)
+  })
+
+  it('refocuses already-open history on directory entry and restores the history detail action after viewing', async () => {
+    const { user, fetch } = historySetup([refRecipe])
+    const { panel } = await historyOpen(user, refRecipe)
+    const card = await within(panel).findByLabelText('History version 3')
+    const action = within(card).getByRole('button', { name: 'View details for version 3' })
+    await user.click(action)
+    const details = await screen.findByRole('region', { name: 'Record details' })
+    await within(details).findByText(refRecipe._id)
+    expect(document.activeElement).toBe(within(details).getByRole('heading', { name: 'Record details' }))
+    await user.click(within(details).getByRole('button', { name: 'Close details' }))
+    expect(document.activeElement).toBe(action)
+    const contextual = screen.getByRole('button', { name: `History for recipe S version 3 for ${refProductId}` })
+    await user.click(contextual)
+    expect(document.activeElement).toBe(within(panel).getByRole('heading', { name: 'Recipe version history' }))
+    await user.click(within(panel).getByRole('button', { name: 'Close recipe history' }))
+    expect(document.activeElement).toBe(contextual)
+    expect(fetch.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true)
+  })
+})

@@ -30,3 +30,61 @@
 .recipe-creation [role="alert"] { line-height: 1.7; }
 @media (max-width: 1050px) { .recipe-selected-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }.recipe-selected-row > button { grid-column: 2; justify-self: start; } }
 @media (max-width: 760px) { .recipe-creation > form { padding: 18px; }.recipe-creation .panel-heading { align-items: start; }.recipe-selected-row { grid-template-columns: minmax(0, 1fr); padding: 12px; }.recipe-selected-row > button { grid-column: auto; }.reference-filters { padding-inline: 12px; }.reference-picker > h3 { padding-inline: 12px; }.reference-picker .reference-warning { margin-inline: 12px; }.recipe-creation .creation-actions { align-items: start; } }
+
+.recipe-history.surface { margin-block: 24px; }
+.recipe-history-link { display: block; }
+.recipe-history .panel-heading { flex-wrap: wrap; align-items: start; }
+.recipe-history .panel-heading > h2 { min-width: 0; flex: 1 1 240px; }
+.recipe-history .panel-heading button { flex-shrink: 0; font-size: 12px; }
+.recipe-history button { max-width: 100%; overflow-wrap: anywhere; }
+.history-content { display: grid; gap: 20px; min-width: 0; padding: 24px; }
+.history-content > *, .history-product-picker > * { min-width: 0; }
+.history-content h3 { margin-bottom: 12px; line-height: 1.5; }
+.history-content p { font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.history-product-picker { display: grid; gap: 16px; min-width: 0; }
+.history-product-search { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.history-product-search label { display: grid; gap: 7px; flex: 1 1 240px; min-width: 0; }
+.history-product-picker > label, .history-context > label { display: grid; gap: 7px; min-width: 0; }
+.history-product-picker label, .history-context > label { font-size: 12px; font-weight: 600; line-height: 1.5; }
+.history-product-picker input, .history-product-picker select, .history-context select { width: 100%; min-width: 0; font-size: 12px; }
+.history-product-picker button { font-size: 12px; }
+.history-context, .history-active { min-width: 0; border: 1px solid #dce5df; border-radius: 9px; padding: 18px; background: #fbfcfa; }
+.history-context > label { max-width: 420px; }
+.history-context > :last-child, .history-active > :last-child { margin-bottom: 0; }
+.history-read-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: 12px; min-width: 0; }
+.history-read-heading h3 { margin-bottom: 6px; }
+.history-read-heading button { font-size: 12px; }
+.history-version-list, .history-ingredients { display: grid; gap: 16px; list-style: none; padding: 0; margin: 0; min-width: 0; }
+.history-version { min-width: 0; padding: 20px; border: 1px solid #dce5df; border-radius: 9px; }
+.history-version > article { min-width: 0; }
+.history-version > article > header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: 12px; margin-bottom: 20px; min-width: 0; }
+.history-version > article > header > * { min-width: 0; }
+.history-version h4, .history-active h4 { margin: 0 0 12px; font-size: 14px; line-height: 1.5; }
+.history-version > article > header h4 { margin: 0; }
+.history-version > article > header > strong { font-size: 12px; line-height: 1.7; }
+.history-version > article > button { margin-top: 20px; font-size: 12px; }
+.history-version-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; min-width: 0; margin: 0 0 20px; }
+.history-version-fields > div { min-width: 0; }
+.history-version-fields dt { line-height: 1.6; }
+.history-reference { display: grid; gap: 6px; min-width: 0; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.history-reference code { display: block; white-space: normal; overflow-wrap: anywhere; }
+.history-reference .status { justify-self: start; }
+.history-ingredient { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 20px; min-width: 0; padding-top: 16px; border-top: 1px solid #e6ece4; }
+.history-ingredient > * { min-width: 0; }
+.history-ingredient > p { margin: 0; }
+.recipe-history .decimal { white-space: normal; overflow-wrap: anywhere; }
+.history-reference-warning { margin: 0; background: #fffcf5; border-left: 3px solid #c59445; padding: 12px; color: #785038; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.recipe-history button:focus-visible, .recipe-history input:focus-visible, .recipe-history select:focus-visible { outline: 3px solid #b46c1d; outline-offset: 3px; }
+@media (max-width: 1050px) {
+  .history-version-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .history-content { padding: 18px; }
+  .recipe-history .panel-heading > button { max-width: 100%; white-space: normal; text-align: left; }
+  .history-product-search { align-items: stretch; }
+  .history-product-search label { flex-basis: 100%; }
+  .history-version-fields, .history-ingredient { grid-template-columns: minmax(0, 1fr); }
+  .history-context, .history-active, .history-version { padding: 14px; }
+  .history-version > article > header { margin-bottom: 16px; }
+  .history-version-fields { gap: 14px; }
+}
