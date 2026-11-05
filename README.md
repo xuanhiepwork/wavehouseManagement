@@ -329,6 +329,8 @@ Tên bảng, quan hệ, thuộc tính và các ràng buộc có thể được �
 Kiến trúc PostgreSQL + Prisma là công nghệ mục tiêu cho giai đoạn phát triển tiếp theo. Các thành phần MongoDB/Mongoose còn tồn tại trong repository sẽ được đánh giá và chuyển đổi theo kế hoạch migration đã được phê duyệt.
 
 
+
+
 ---
 
 ## Quy tắc đặt tên nhánh
@@ -353,6 +355,9 @@ Ví dụ: `feature/backend-stock-import`
 | `tests/` | Thêm hoặc sửa kiểm thử | `tests/backend-stock-import` |
 | `feature/web-` | Thêm giao diện hoặc chức năng trên web | `feature/web-login-page` |
 | `feature/mobile-` | Thêm giao diện hoặc chức năng trên mobile | `feature/mobile-login-screen` |.
+
+
+
 
 ---
 ## SỬ DỤNG GITHUB
