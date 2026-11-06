@@ -43,12 +43,12 @@ function HomeLink() {
 
 export function CatalogHomeScreen() {
   return <PlaceholderScreen title="Catalog">
-    <Text allowFontScaling style={styles.body}>Browse Ingredients and Products or preview the upcoming Recipe section.</Text>
+    <Text allowFontScaling style={styles.body}>Browse Ingredients, Products, and versioned Recipes.</Text>
     <View style={styles.links}>
       {resources.map(({ resource, title }) => {
         const href = catalogListHref(resource);
         return href && <CatalogLink key={resource} href={href} label={title}
-          description={resource === 'recipes' ? 'Open the recipes list placeholder.' : `Search and browse ${title}.`} accessibilityLabel={`Open ${title} list`} />;
+          description={`Search and browse ${title}.`} accessibilityLabel={`Open ${title} list`} />;
       })}
     </View>
   </PlaceholderScreen>;

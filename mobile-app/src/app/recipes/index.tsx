@@ -1,5 +1,5 @@
-import { CatalogListPlaceholder } from '../../navigation/CatalogPlaceholder';
+import { RecipeListScreen } from '../../recipes/RecipeScreens';
 
 export default function RecipesRoute() {
-  return <CatalogListPlaceholder resource="recipes" />;
+  return <RecipeListScreen />;
 }

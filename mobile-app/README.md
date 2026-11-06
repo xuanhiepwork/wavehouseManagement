@@ -2,8 +2,8 @@
 
 The Mobile-owned client exposes six read operations:
 `ingredients.list/detail`, `products.list/detail`, and `recipes.list/detail`.
-It does not start requests on import. Ingredient and Product screens read on
-focus with explicit API configuration. Recipe screens remain placeholders.
+It does not start requests on import. Ingredient, Product, and Recipe screens
+read on focus with explicit API configuration.
 
 ## Navigation foundation (Phase 2.5.5.3)
 
@@ -19,13 +19,13 @@ the active entry. Shared non-route components and route helpers live in
 | `/ingredients/[id]` | Ingredient detail, validated UUID and explicit retry |
 | `/products` | Searchable Product list with category/availability filters and pagination |
 | `/products/[id]` | Product detail with supported size prices, validated UUID and retry |
-| `/recipes` | List placeholder |
-| `/recipes/[id]` | Detail placeholder with validated raw UUID context |
+| `/recipes` | Recipe history with Product/size/status filters and pagination |
+| `/recipes/[id]` | Recipe detail with current Product/Ingredient reference metadata |
 | Unmatched path | Screen-unavailable message and Catalog exit |
 
-Normal navigation uses the native Stack header/back behavior. Detail placeholders
+Normal navigation uses the native Stack header/back behavior. Detail screens
 also provide list and Catalog exits for direct links without prior history.
-Ingredient and Product details use the same exits. Invalid or ambiguous UUID parameters are
+Invalid or ambiguous UUID parameters are
 rejected before creating an API client or loading a record.
 Content scrolls inside safe areas beneath the native header, supports font
 scaling, and uses labelled native links with large touch targets.
@@ -338,3 +338,94 @@ with the prior Ingredient phase staged. During implementation an external commit
 advanced HEAD to `c89c29e103ffc0f4442ec2d5d47d271b87c95c6e`; its complete diff
 matches the initially staged patch exactly. Product work remains separate from
 that preserved baseline. Stopped after Phase 2.5.5.5 for review.
+
+## Phase 2.5.5.6 — Recipe list and detail
+
+Recipe cards show the raw Recipe and Product UUIDs, size, server version,
+active/inactive status, current Product name/code when resolved, and historical
+Ingredient membership with exact quantity strings. The list preserves backend
+row order and has no text search or sorting controls. Product UUID, size
+(All/S/M/L), and status (All/Active/Inactive) filters use separate drafts.
+All status omits `isActive`; Inactive sends explicit `false`. Apply and Reset
+return to page one, page size is 20, and Previous/Next use the applied query.
+
+Recipe details validate a single route UUID before constructing the client.
+They show the raw identifiers, authoritative version/status, raw timestamps,
+and every historical membership quantity without numeric conversion. Empty
+Ingredient membership is presented as valid historical data. The UI does not
+infer that the highest version is active and does not infer historical names,
+codes, or units from present-day metadata.
+
+Current Product and Ingredient metadata is resolved only through the existing
+GET-only detail operations. The resolver deduplicates UUIDs within a response
+revision and runs at most four reference reads concurrently. Raw Recipe data
+stays visible when a reference is missing or unavailable. Failed references
+remain isolated and expose independent explicit retry actions; they are not
+retried by focus or navigation. Unavailable Products and inactive Ingredients
+are displayed as returned. Reference reads cancel on blur, revision changes,
+or unmount, and late outcomes cannot replace a newer Recipe response.
+
+`RecipeStateProvider` retains the list draft, applied filters, page, settled
+results/errors, and settled Product references while the Catalog Stack remains
+mounted. Recipe state is independent of Ingredient and Product state. Main and
+reference failures require explicit retry, pending reads cancel on blur, and
+direct detail links keep safe list and Catalog exits.
+
+Verification (2026-11-06):
+
+| Check | Result |
+| --- | --- |
+| `npm test` | 428 passed: all 400 existing cases unchanged plus 28 Recipe cases |
+| `npm run typecheck` | Passed |
+| `npm run lint -- --no-cache` | Passed |
+| Android and iOS Metro exports, `--no-bytecode` | Passed; JavaScript bundling only |
+| Mobile diff whitespace check, including new files | Passed |
+
+The Recipe cases cover supported query mapping, explicit false status, invalid
+Product/route UUIDs, Apply/Reset/pagination, backend ordering, version/status
+presentation, exact quantities, empty membership, direct links, missing and
+unavailable references, deduplication, four-read concurrency, independent
+reference retries, timeouts, malformed responses, cancellation, stale outcomes,
+retained list state, independent feature state, and GET-only requests. They use
+the existing Node test runner and mocked fetch; no native test dependency was
+added.
+
+Automated tests do not render React Native or exercise Router/device navigation.
+Native layout, long-value wrapping, font scaling, keyboard and screen-reader
+behavior, deep links, gestures, hardware back, device connectivity, and Android
+or iOS device builds remain unverified. Web Browser QA remains deferred.
+
+The documented malformed-link availability risk in Router's
+`decode-uri-component` dependency path remains unresolved and requires a
+separate assessment before release. No dependency, SDK, React Native, React,
+TypeScript, manifest, lockfile, or audit-fix change was made.
+
+Modified files, relative to `mobile-app/`:
+
+```text
+README.md
+src/app/_layout.tsx
+src/app/recipes/index.tsx
+src/app/recipes/[id].tsx
+src/navigation/CatalogPlaceholder.tsx
+```
+
+Created files:
+
+```text
+src/recipes/RecipeScreens.tsx
+src/recipes/RecipeState.tsx
+src/recipes/recipe.controller.ts
+src/recipes/recipe.model.ts
+src/recipes/recipe.references.ts
+src/recipes/recipe.styles.ts
+__tests__/catalog-recipes.test.ts
+```
+
+Ingredient/Product source and behavior, all 400 existing tests and fixtures,
+the GET-only API client/configuration, package manifests, Web, backend, Prisma,
+migrations, environment files, root README, and PostgreSQL data are unchanged.
+No live Catalog request, database operation, deployment, dependency operation,
+or Git write was performed. Work began from the clean `test` branch at
+`30b999352659f6c2b69093bd2f9ce16c17cd93d4`. Stopped after Phase 2.5.5.6 for
+review.
