@@ -1,5 +1,5 @@
-import { CatalogListPlaceholder } from '../../navigation/CatalogPlaceholder';
+import { ProductListScreen } from '../../products/ProductScreens';
 
 export default function ProductsRoute() {
-  return <CatalogListPlaceholder resource="products" />;
+  return <ProductListScreen />;
 }

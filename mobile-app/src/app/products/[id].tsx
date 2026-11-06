@@ -1,7 +1,7 @@
 import { useLocalSearchParams } from 'expo-router';
-import { CatalogDetailPlaceholder } from '../../navigation/CatalogPlaceholder';
+import { ProductDetailScreen } from '../../products/ProductScreens';
 
 export default function ProductDetailRoute() {
   const { id } = useLocalSearchParams();
-  return <CatalogDetailPlaceholder resource="products" id={id} />;
+  return <ProductDetailScreen id={id} />;
 }
