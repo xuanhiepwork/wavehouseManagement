@@ -2,8 +2,8 @@
 
 The Mobile-owned client exposes six read operations:
 `ingredients.list/detail`, `products.list/detail`, and `recipes.list/detail`.
-It does not start requests on import. The navigation placeholders do not create
-a client or issue Catalog requests.
+It does not start requests on import. Ingredient screens read on focus with
+explicit API configuration. Product and Recipe screens remain placeholders.
 
 ## Navigation foundation (Phase 2.5.5.3)
 
@@ -15,13 +15,16 @@ the active entry. Shared non-route components and route helpers live in
 | Path | Current behavior |
 | --- | --- |
 | `/` | Catalog home with links to the three sections |
-| `/ingredients`, `/products`, `/recipes` | List placeholders |
-| `/ingredients/[id]`, `/products/[id]`, `/recipes/[id]` | Detail placeholders with validated raw UUID context |
+| `/ingredients` | Searchable Ingredient list with filters, sorting and pagination |
+| `/ingredients/[id]` | Ingredient detail, validated UUID and explicit retry |
+| `/products`, `/recipes` | List placeholders |
+| `/products/[id]`, `/recipes/[id]` | Detail placeholders with validated raw UUID context |
 | Unmatched path | Screen-unavailable message and Catalog exit |
 
 Normal navigation uses the native Stack header/back behavior. Detail placeholders
 also provide list and Catalog exits for direct links without prior history.
-Invalid or ambiguous UUID parameters are rejected without loading a record.
+Ingredient details use the same exits. Invalid or ambiguous UUID parameters are
+rejected before creating an API client or loading a record.
 Content scrolls inside safe areas beneath the native header, supports font
 scaling, and uses labelled native links with large touch targets.
 
@@ -107,7 +110,7 @@ Redirect metadata or a changed final response URL is rejected before data is
 returned, but a native transport may already have followed that redirect, and
 may omit URL metadata. Cookie isolation is not guaranteed by this wrapper.
 
-Full Catalog data screens, reference lookup UI, native rendering tests, Android
+Product/Recipe data screens, reference lookup UI, native rendering tests, Android
 device smoke testing, and deferred Web Browser QA remain later work. Metro
 Android and iOS exports verify route bundling, without generating native projects or
 performing a device build.
@@ -167,3 +170,85 @@ Web, backend, Prisma, migrations, environment files, and PostgreSQL were not
 modified. No Catalog API requests or Git commits, merges, pushes, or branch
 switches were performed. Branch `test` and HEAD
 `2232f3f176e8f229355539a5ebfd6e87393fa416` remain unchanged.
+
+## Phase 2.5.5.4 — Ingredient list and detail
+
+Ingredient cards show name, code, category, unit, active/inactive status, cost
+price and minimum stock. Details add the raw UUID and created/updated UTC
+timestamps. Presentation uses the wire strings directly, including decimal
+values; no floating-point conversion or truncation is applied.
+
+Search and filter controls have separate drafts. Apply trims optional search
+and category, omits blanks, applies the chosen filters/sort, and resets to page
+one. Category is an exact match. Unit supports any/g/ml/piece. Status supports
+the omitted backend default (active), explicit active, or inactive; there is no
+combined all-status request. All eight backend sort fields and asc/desc are
+available. Page size is 20. Previous/Next use the applied query, not unsaved
+drafts, and respect valid server pagination, including empty pages/count drift.
+
+`IngredientStateProvider` retains list drafts, applied filters, page and settled
+results/errors within the mounted Catalog stack. Pending reads are cancelled on
+blur/unmount, and superseded outcomes are ignored. Returning from detail reuses
+settled list state; cancelled reads resume on focus. Settled errors require an
+explicit retry. State is in memory and does not persist across app restarts.
+Changing a detail UUID switches read state before rendering old data. Invalid
+UUIDs never create a client or request a record. Missing/invalid configuration,
+timeouts, missing records and malformed responses use fixed safe error messages.
+
+Verification (2026-11-05):
+
+| Check | Result |
+| --- | --- |
+| `npm test` | 344 passed: all 282 original cases unchanged plus 62 Ingredient cases |
+| `npm run typecheck` | Passed |
+| `npm run lint -- --no-cache` | Passed |
+| Android and iOS Metro exports, `--no-bytecode` | Passed; JavaScript bundling only |
+| Mobile diff whitespace check, including new files | Passed |
+
+New tests cover query/filter/sort/status mapping, real-client mocked GET reads,
+pagination, exact field presentation, invalid UUIDs, configuration/error/retry,
+deadlines/cancellation, stale responses and retained list state. They do not
+render React Native or execute Router navigation. Device/simulator rendering,
+keyboard behavior, screen-reader announcements, gestures and hardware back
+navigation remain unverified. Web Browser QA remains deferred.
+
+Read-only security review still reports 20 affected package entries (5 high,
+14 moderate, 1 low), rather than 20 independent bugs. The installed Router →
+query-string → decode-uri-component path reaches the affected decoder before
+screen UUID validation. This is a runtime-relevant malformed-link availability
+risk; exploitation on this app/device was not tested. See the
+[decoder maintainer advisory](https://github.com/SamVerschueren/decode-uri-component/security/advisories/GHSA-qr28-fpjm-wq7f).
+Sixteen entries concern Expo/ESLint tooling; app runtime reachability was not
+confirmed for those paths. The low deepmerge entry refers to a
+[CVE rejected on November 2](https://raw.githubusercontent.com/CVEProject/cvelistV5/main/cves/2026/93xxx/CVE-2026-93753.json).
+No dependencies, SDK/runtime/compiler versions, lockfiles or audit fixes were
+changed in this phase.
+
+Modified files, relative to `mobile-app/`:
+
+```text
+README.md
+src/app/_layout.tsx
+src/app/ingredients/index.tsx
+src/app/ingredients/[id].tsx
+src/navigation/CatalogPlaceholder.tsx
+```
+
+Created files:
+
+```text
+src/ingredients/IngredientScreens.tsx
+src/ingredients/IngredientState.tsx
+src/ingredients/ingredient.controller.ts
+src/ingredients/ingredient.model.ts
+src/ingredients/ingredient.styles.ts
+__tests__/catalog-ingredients.test.ts
+```
+
+The existing API/read utilities, contracts, all 282 existing tests/fixtures,
+Product/Recipe routes, Web, backend, Prisma, migrations, environment files and
+PostgreSQL data are unchanged. The root README was preserved byte-for-byte. No
+live Catalog API requests, database writes, deployment, commits, merges, pushes
+or branch switches were performed. Branch `test` and HEAD
+`c5ec2cff40e752f2f09040ee88c060b774e4056f` are preserved. Stopped after
+Phase 2.5.5.4 for review.

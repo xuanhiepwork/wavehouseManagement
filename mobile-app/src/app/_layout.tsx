@@ -1,9 +1,10 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { catalogColors } from '../navigation/catalog.styles';
+import { IngredientStateProvider } from '../ingredients/IngredientState';
 
 export default function CatalogLayout() {
-  return <>
+  return <IngredientStateProvider>
     <StatusBar style="dark" />
     <Stack screenOptions={{
       headerStyle: { backgroundColor: catalogColors.surface },
@@ -20,5 +21,5 @@ export default function CatalogLayout() {
       <Stack.Screen name="recipes/[id]" options={{ title: 'Recipe detail' }} />
       <Stack.Screen name="+not-found" options={{ title: 'Screen unavailable' }} />
     </Stack>
-  </>;
+  </IngredientStateProvider>;
 }

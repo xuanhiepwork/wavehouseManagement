@@ -1,0 +1,53 @@
+import { StyleSheet } from 'react-native';
+import { catalogColors } from '../navigation/catalog.styles';
+
+export const ingredientStyles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: catalogColors.background },
+  list: { flex: 1 },
+  content: { width: '100%', maxWidth: 720, alignSelf: 'center', padding: 20, flexGrow: 1 },
+  detailContent: { gap: 20 },
+  header: { gap: 20, marginBottom: 20 },
+  headingGroup: { gap: 8 },
+  title: { color: catalogColors.text, fontSize: 28, lineHeight: 36, fontWeight: '700', flexShrink: 1 },
+  sectionTitle: { color: catalogColors.text, fontSize: 19, lineHeight: 28, fontWeight: '600', flexShrink: 1 },
+  body: { color: catalogColors.muted, fontSize: 16, lineHeight: 25, flexShrink: 1 },
+  label: { color: catalogColors.muted, fontSize: 14, lineHeight: 22, fontWeight: '600' },
+  input: {
+    minHeight: 52, borderWidth: 1, borderColor: '#a9beb0', borderRadius: 9,
+    paddingHorizontal: 12, paddingVertical: 12, color: catalogColors.text,
+    backgroundColor: catalogColors.surface, fontSize: 16, lineHeight: 24,
+  },
+  field: { gap: 6, minWidth: 0 },
+  fieldValue: { color: catalogColors.text, fontSize: 16, lineHeight: 26, flexShrink: 1 },
+  name: { color: catalogColors.text, fontSize: 21, lineHeight: 30, fontWeight: '600', flexShrink: 1 },
+  panel: {
+    padding: 18, gap: 18, minWidth: 0, borderWidth: 1,
+    borderColor: catalogColors.border, borderRadius: 14, backgroundColor: catalogColors.surface,
+  },
+  choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  choice: {
+    minHeight: 48, flexGrow: 1, flexBasis: 120, justifyContent: 'center',
+    borderWidth: 1, borderColor: '#afc3b6', borderRadius: 9,
+    paddingHorizontal: 12, paddingVertical: 12, backgroundColor: catalogColors.surface,
+  },
+  choiceSelected: { borderColor: catalogColors.accent, backgroundColor: '#e8f2e9', borderWidth: 2 },
+  choiceText: { color: catalogColors.text, fontSize: 15, lineHeight: 23, flexShrink: 1 },
+  choiceTextSelected: { color: catalogColors.accent, fontWeight: '700' },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  button: {
+    minHeight: 48, justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1, borderColor: '#9bb3a3', borderRadius: 9,
+    paddingHorizontal: 16, paddingVertical: 13, backgroundColor: catalogColors.surface,
+  },
+  actionButton: { flexGrow: 1, flexBasis: 120 },
+  buttonPrimary: { backgroundColor: catalogColors.accent, borderColor: catalogColors.accent },
+  buttonPressed: { opacity: 0.75 },
+  buttonDisabled: { opacity: 0.45 },
+  buttonText: { color: catalogColors.accent, fontSize: 16, lineHeight: 24, fontWeight: '600', textAlign: 'center', flexShrink: 1 },
+  buttonTextPrimary: { color: '#ffffff' },
+  feedback: { padding: 20, gap: 14, borderRadius: 12, backgroundColor: catalogColors.surface },
+  loading: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 12 },
+  error: { color: '#873f2c' },
+  footer: { marginTop: 20, gap: 16 },
+  separator: { height: 16 },
+});
