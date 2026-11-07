@@ -389,3 +389,17 @@ git push origin test
 ```
 
 ---
+
+## KẾT NỐI VỚI ĐIỆN THOẠI ANDROI
+
+### CHẾ ĐỘ NHÀ PHÁT TRIỂN >>> GỠ LỖI KHÔNG DÂY >>> GHÉP NỐI THIẾT BỊ BẰNG MÃ GHÉP NỐI
+
+```
+$adb = 'C:\Android\Sdk\platform-tools\adb.exe'
+
+& $adb pair 192.168.2.57:37319
+```
+
+#### Nhập mã trên điện thoại vào khi terminal hỏi
+
+---
