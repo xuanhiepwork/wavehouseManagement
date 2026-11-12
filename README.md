@@ -331,6 +331,8 @@ Kiến trúc PostgreSQL + Prisma là công nghệ mục tiêu cho giai đoạn p
 
 
 
+
+
 ---
 
 ## Quy tắc đặt tên nhánh
@@ -355,6 +357,8 @@ Ví dụ: `feature/backend-stock-import`
 | `tests/` | Thêm hoặc sửa kiểm thử | `tests/backend-stock-import` |
 | `feature/web-` | Thêm giao diện hoặc chức năng trên web | `feature/web-login-page` |
 | `feature/mobile-` | Thêm giao diện hoặc chức năng trên mobile | `feature/mobile-login-screen` |.
+
+
 
 
 
@@ -390,7 +394,9 @@ git push origin test
 
 ---
 
-## KẾT NỐI VỚI ĐIỆN THOẠI ANDROI
+# SỬ DỤNG ĐIỆN THOẠI DEBBUG
+
+## BƯỚC 1:KẾT NỐI VỚI ĐIỆN THOẠI ANDROI
 
 ### CHẾ ĐỘ NHÀ PHÁT TRIỂN >>> GỠ LỖI KHÔNG DÂY >>> GHÉP NỐI THIẾT BỊ BẰNG MÃ GHÉP NỐI
 
@@ -402,4 +408,71 @@ $adb = 'C:\Android\Sdk\platform-tools\adb.exe'
 
 #### Nhập mã trên điện thoại vào khi terminal hỏi
 
+
+## BƯỚC 2: KẾT NỐI ADB
+```
+$adb = 'C:\Android\Sdk\platform-tools\adb.exe'
+
+# Thay CONNECTION_PORT bằng Cổng & Địa chỉ IP trên màn hình Gỡ lỗi không dây
+Test-NetConnection 192.168.2.57 -Port 42441
+
+& $adb connect 192.168.2.57:42441
+& $adb devices -l
+
+```
+
+## BƯỚC 3: KẾT NỐI
+### CHẠY CÂU LỆNH SAU ĐỂ KIỂM TRA VÀ LẤY SỐ SERIES:
+```
+$adb = 'C:\Android\Sdk\platform-tools\adb.exe'
+& $adb devices -l
+```
+
+### MÃ TRƯỚC CHỮ DEVICE LÀ SERIES...
+
+### Nhập câu lệnh sau khi đã có số series:
+```
+$phoneSerial = 'THAY_BANG_SERIAL_THUC_TE'
+# Không được bỏ dấu '  '
+
+& $adb -s $phoneSerial get-state
+& $adb -s $phoneSerial shell getprop ro.product.brand
+& $adb -s $phoneSerial shell getprop ro.product.model
+```
+
+### Kiểm tra không có dịch vụ laptop đang dùng cổng thử nghiệm
+Get-NetTCPConnection -LocalPort 17500 -State Listen `
+  -ErrorAction SilentlyContinue
+
+### Kiểm tra các mapping hiện có trên điện thoại
+```
+& $adb -s $phoneSerial reverse --list
+
+$created = $false
+
+try {
+    & $adb -s $phoneSerial reverse --no-rebind tcp:17500 tcp:17500
+
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Không tạo được mapping thử nghiệm.'
+    }
+
+    $created = $true
+
+    Write-Host '=== ADB reverse mappings ==='
+    & $adb -s $phoneSerial reverse --list
+
+    Write-Host '=== Phone TCP listeners ==='
+    & $adb -s $phoneSerial shell ss -ltn
+}
+finally {
+    if ($created) {
+        & $adb -s $phoneSerial reverse --remove tcp:17500
+        Write-Host 'Đã gỡ mapping thử nghiệm 17500.'
+    }
+}
+```
 ---
+
+# CÁC BƯỚC KHỞI ĐỘNG DỰ ÁN - CHẠY DEMO
+

@@ -48,6 +48,28 @@ export function loadPostgresEnvironment() {
 }
 export function postgresUrl(env: Environment = process.env): string {
     if (!catalogUsesPostgres(env)) throw new Error('PostgreSQL Catalog mode is not enabled');
+    const target = env.CATALOG_POSTGRES_TARGET ?? 'local';
+
+    if (target !== 'local' && target !== 'aiven') {
+        throw new Error('Unsupported PostgreSQL target');
+    }
+
+    if (target === 'aiven') {
+        if (env.NODE_ENV !== 'development') {
+            throw new Error('Aiven is only allowed in development mode');
+        }
+
+        if (!env.AIVEN_DB_PASSWORD) {
+            throw new Error('Aiven database password is missing');
+        }
+
+        const url = new URL(
+            'postgresql://wavehouse_app@do-an-he-thong-quan-ly-kho-do-an-2026.b.aivencloud.com:24631/wavehouse_dev'
+        );
+
+        url.password = env.AIVEN_DB_PASSWORD;
+        return url.toString();
+    }
     const value = env.NODE_ENV === 'test' ? env.TEST_DATABASE_URL : env.DATABASE_URL;
     const database = env.NODE_ENV === 'test' ? 'wavehouse_test' : 'wavehouse_dev';
     let url: URL;
