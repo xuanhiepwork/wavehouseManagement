@@ -131,12 +131,7 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  branch Branch? @relation(
-    fields: [branchId],
-    references: [id],
-    onDelete: Restrict,
-    onUpdate: Restrict
-  )
+branch Branch? @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([branchId, isActive])
   @@map("users")
