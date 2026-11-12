@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client"
+  output = "../src/generated/prisma"
+  moduleFormat = "cjs"
+  importFileExtension = ""
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum BaseUnit {
+  g
+  ml
+  piece
+}
+
+enum ProductSize {
+  S
+  M
+  L
+}
+
+model Ingredient {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code              String             @unique @db.VarChar(64)
+  name              String             @db.VarChar(200)
+  category          String             @db.VarChar(100)
+  unit              BaseUnit
+  costPrice         Decimal            @map("cost_price") @db.Decimal(18, 4)
+  minStock          Decimal            @default(0) @map("min_stock") @db.Decimal(18, 6)
+  isActive          Boolean            @default(true) @map("is_active")
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  recipeIngredients RecipeIngredient[]
+
+  @@index([category, isActive])
+  @@map("ingredients")
+}
+
+model Product {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String           @unique @db.VarChar(64)
+  name        String           @db.VarChar(200)
+  category    String           @db.VarChar(100)
+  description String?
+  imageUrl    String?          @map("image_url")
+  isAvailable Boolean          @default(true) @map("is_available")
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  variants    ProductVariant[]
+
+  @@index([category, isAvailable])
+  @@map("products")
+}
+
+model ProductVariant {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId      String      @map("product_id") @db.Uuid
+  size           ProductSize
+  price          Decimal     @db.Decimal(18, 4)
+  activeRecipeId String?     @map("active_recipe_id") @db.Uuid
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  product        Product     @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  recipes        Recipe[]    @relation("VariantRecipes")
+  activeRecipe   Recipe?     @relation("ActiveRecipe", fields: [activeRecipeId, id], references: [id, productVariantId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([productId, size])
+  @@index([activeRecipeId, id])
+  @@map("product_variants")
+}
+
+model Recipe {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productVariantId String             @map("product_variant_id") @db.Uuid
+  version          Int                @default(1)
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  productVariant   ProductVariant     @relation("VariantRecipes", fields: [productVariantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  activeFor        ProductVariant[]   @relation("ActiveRecipe")
+  ingredients      RecipeIngredient[]
+
+  @@unique([productVariantId, version])
+  @@unique([id, productVariantId])
+  @@map("recipes")
+}
+
+model RecipeIngredient {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recipeId     String     @map("recipe_id") @db.Uuid
+  ingredientId String     @map("ingredient_id") @db.Uuid
+  quantity     Decimal    @db.Decimal(18, 6)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  recipe       Recipe     @relation(fields: [recipeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([recipeId, ingredientId])
+  @@index([ingredientId])
+  @@map("recipe_ingredients")
+}
