@@ -46,3 +46,55 @@ Development uses `DATABASE_URL`; test uses only `TEST_DATABASE_URL`. Runtime loa
 still require MongoDB and PostgreSQL; PostgreSQL Recipes require both prerequisites
 in PostgreSQL. The default Docker Compose workflow remains MongoDB-based; this
 local/test mode does not enable PostgreSQL in production or migrate existing data.
+
+
+#   KHỞI ĐỘNG BACKEND
+Terminal 1 — Chạy Backend
+
+Tại thư mục backend, chạy:
+cd D:\code\DoAn\WaveHouseManagement\backend
+
+.\node_modules\.bin\tsc.cmd
+
+if ($LASTEXITCODE -ne 0) {
+    throw 'BACKEND BUILD FAILED'
+}
+
+
+Sau đó, trong chính Terminal này, bảo đảm các biến môi trường dành cho Aiven đã được thiết lập:
+$env:NODE_ENV='development'
+$env:PORT='5000'
+$env:CATALOG_POSTGRES_TARGET='aiven'
+$env:CATALOG_INGREDIENT_STORE='postgres'
+$env:CATALOG_PRODUCT_STORE='postgres'
+$env:CATALOG_RECIPE_STORE='postgres'
+$env:AIVEN_CA_PATH='D:\code\DoAn\WaveHouseManagement\ca.pem'
+
+
+Kiểm tra mật khẩu của wavehouse_app:
+if (-not $env:AIVEN_DB_PASSWORD) {
+    Write-Host 'CHUA CO MAT KHAU wavehouse_app TRONG TERMINAL NAY'
+}
+
+
+Nếu hiện thông báo thiếu mật khẩu, nhập lại mật khẩu wavehouse_app bằng cách sau:
+$secret = Read-Host 'Mat khau wavehouse_app' -AsSecureString
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+
+try {
+    $env:AIVEN_DB_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+}
+finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    $secret.Dispose()
+}
+
+
+Lưu ý: AIVEN_ADMIN_DB_PASSWORD của avnadmin không thay thế được AIVEN_DB_PASSWORD của ứng dụng.
+
+Bây giờ khởi động:
+node .\dist\server.js
+
+
+Kết quả mong đợi:
+Backend listening on http://localhost:5000

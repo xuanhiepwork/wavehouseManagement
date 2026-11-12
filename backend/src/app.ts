@@ -1,3 +1,5 @@
+import type { PrismaClient } from './generated/prisma/client';
+import { createAuthRouter } from './routes/auth.routes';
 import express from 'express';
 import http from 'node:http';
 import { Server } from 'socket.io';
@@ -26,17 +28,24 @@ const apiDocs = {
         ...productPaths,
         ...recipePaths,
         '/': { get: { summary: 'Server status', responses: { '200': { description: 'Server is running' } } } },
-        '/health': { get: { summary: 'Database readiness', responses: {
-            '200': { description: 'Database is connected' },
-            '503': { description: 'Database is unavailable' },
-        } } },
+        '/health': {
+            get: {
+                summary: 'Database readiness', responses: {
+                    '200': { description: 'Database is connected' },
+                    '503': { description: 'Database is unavailable' },
+                }
+            }
+        },
     },
 };
 
 export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = () => mongoose.connection.readyState === 1,
-    options: { postgresIngredients?: ReturnType<typeof createPostgresIngredientService>;
+    options: {
+        postgresIngredients?: ReturnType<typeof createPostgresIngredientService>;
         postgresProducts?: ReturnType<typeof createPostgresProductService>;
-        postgresRecipes?: ReturnType<typeof createPostgresRecipeService> } = {}) {
+        postgresRecipes?: ReturnType<typeof createPostgresRecipeService>;
+        authPrisma?: PrismaClient;
+    } = {}) {
     const mode = ingredientStore();
     const products = productStore();
     const recipes = recipeStore();
@@ -46,9 +55,11 @@ export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = ()
     const ingredientDocs = mode === 'postgres' ? postgresIngredientDocumentation() : { schemas: {}, paths: {} };
     const productDocs = products === 'postgres' ? postgresProductDocumentation() : { schemas: {}, paths: {} };
     const recipeDocs = recipes === 'postgres' ? postgresRecipeDocumentation() : { schemas: {}, paths: {} };
-    const docs = { ...apiDocs,
+    const docs = {
+        ...apiDocs,
         components: { schemas: { ...apiDocs.components.schemas, ...ingredientDocs.schemas, ...productDocs.schemas, ...recipeDocs.schemas } },
-        paths: { ...apiDocs.paths, ...ingredientDocs.paths, ...productDocs.paths, ...recipeDocs.paths } };
+        paths: { ...apiDocs.paths, ...ingredientDocs.paths, ...productDocs.paths, ...recipeDocs.paths }
+    };
     const app = express();
     const server = http.createServer(app);
     const origin = process.env.CORS_ORIGIN?.split(',').map(value => value.trim()).filter(Boolean) ?? '*';
@@ -66,6 +77,9 @@ export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = ()
         try { ready = await isDatabaseReady(); } catch { /* Readiness failures are sanitized. */ }
         res.status(ready ? 200 : 503).json({ status: ready ? 'ok' : 'unavailable' });
     });
+    if (options.authPrisma) {
+        app.use('/api/auth', createAuthRouter(options.authPrisma));
+    }
     app.use('/api/ingredients', options.postgresIngredients ? postgresIngredientRouter(options.postgresIngredients) : ingredientRouter);
     app.use('/api/products', options.postgresProducts ? postgresProductRouter(options.postgresProducts) : productRouter);
     app.use('/api/recipes', options.postgresRecipes ? postgresRecipeRouter(options.postgresRecipes) : recipeRouter);

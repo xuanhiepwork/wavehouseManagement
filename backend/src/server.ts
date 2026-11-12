@@ -44,6 +44,7 @@ export async function startServer() {
         const ready = async () => (!usesMongo || mongoose.connection.readyState === 1)
             && (!runtime || await runtime.ready());
         application = createApp(ready, runtime ? {
+            authPrisma: runtime.client,
             ...(ingredientStore() === 'postgres' ? { postgresIngredients: createPostgresIngredientService(runtime.client) } : {}),
             ...(productStore() === 'postgres' ? { postgresProducts: createPostgresProductService(runtime.client) } : {}),
             ...(recipeStore() === 'postgres' ? { postgresRecipes: createPostgresRecipeService(runtime.client) } : {}),
@@ -66,7 +67,7 @@ export async function startServer() {
             else server.listen(port, listening);
         });
     } catch {
-        await cleanup().catch(() => {});
+        await cleanup().catch(() => { });
         throw new Error('Backend database connection or startup failed');
     }
     const { server } = application;
