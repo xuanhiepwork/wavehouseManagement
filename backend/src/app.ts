@@ -17,6 +17,7 @@ import type { createPostgresProductService } from './services/product.postgres.s
 import { recipeRouter, postgresRecipeRouter } from './routes/recipe.routes';
 import { recipePaths, recipeSchemas, postgresRecipeDocumentation } from './config/recipe.openapi';
 import type { createPostgresRecipeService } from './services/recipe.postgres.service';
+import { createAuthGuards } from './middleware/auth.middleware';
 
 // Explicit paths keep documentation working after TypeScript sources are compiled.
 const apiDocs = {
@@ -78,7 +79,26 @@ export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = ()
         res.status(ready ? 200 : 503).json({ status: ready ? 'ok' : 'unavailable' });
     });
     if (options.authPrisma) {
-        app.use('/api/auth', createAuthRouter(options.authPrisma));
+        const sessions = new Map<string, {
+            userId: string;
+            expiresAt: number;
+        }>();
+
+        const guards = createAuthGuards(options.authPrisma, sessions);
+
+        app.use('/api/auth', createAuthRouter(options.authPrisma, sessions));
+
+        for (const path of [
+            '/api/ingredients',
+            '/api/products',
+            '/api/recipes',
+        ]) {
+            app.use(
+                path,
+                guards.requireAuth,
+                guards.requireAdminForMutations
+            );
+        }
     }
     app.use('/api/ingredients', options.postgresIngredients ? postgresIngredientRouter(options.postgresIngredients) : ingredientRouter);
     app.use('/api/products', options.postgresProducts ? postgresProductRouter(options.postgresProducts) : productRouter);

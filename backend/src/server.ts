@@ -66,7 +66,12 @@ export async function startServer() {
             if (usesPostgres) server.listen(port, '127.0.0.1', listening);
             else server.listen(port, listening);
         });
-    } catch {
+    } catch (error) {
+        console.error(
+            'STARTUP DIAGNOSTIC:',
+            error instanceof Error ? error.message : 'Unknown startup error'
+        );
+
         await cleanup().catch(() => { });
         throw new Error('Backend database connection or startup failed');
     }

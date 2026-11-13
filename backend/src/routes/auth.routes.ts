@@ -7,14 +7,15 @@ const SESSION_DURATION_MS = 8 * 60 * 60 * 1000;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_LOGIN_ATTEMPTS = 10;
 
-export function createAuthRouter(prisma: PrismaClient) {
-    const router = Router();
-    const authService = createAuthService(prisma);
-
-    const sessions = new Map<string, {
+export function createAuthRouter(
+    prisma: PrismaClient,
+    sessions = new Map<string, {
         userId: string;
         expiresAt: number;
-    }>();
+    }>()
+) {
+    const router = Router();
+    const authService = createAuthService(prisma);
 
     const loginAttempts = new Map<string, {
         count: number;
