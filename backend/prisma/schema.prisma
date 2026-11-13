@@ -33,6 +33,8 @@ model Ingredient {
   createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   recipeIngredients RecipeIngredient[]
+  inventoryBalances  InventoryBalance[]
+  inventoryMovements InventoryMovement[]
 
   @@index([category, isActive])
   @@map("ingredients")
@@ -116,6 +118,8 @@ model Branch {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   users User[]
+  inventoryBalances  InventoryBalance[]
+  inventoryMovements InventoryMovement[]
 
   @@map("branches")
 }
@@ -131,8 +135,55 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-branch Branch? @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  branch Branch? @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  inventoryMovements InventoryMovement[] @relation("InventoryMovementActor")
 
   @@index([branchId, isActive])
   @@map("users")
+}
+
+enum InventoryMovementKind {
+  OPENING
+  RECEIPT
+  ISSUE
+  TRANSFER_IN
+  TRANSFER_OUT
+  COUNT_ADJUSTMENT
+  RECIPE_CONSUMPTION
+}
+
+model InventoryBalance {
+  branchId     String   @map("branch_id") @db.Uuid
+  ingredientId String   @map("ingredient_id") @db.Uuid
+  quantity     Decimal  @default(0) @db.Decimal(18, 6)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  branch     Branch     @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([branchId, ingredientId])
+  @@index([ingredientId])
+  @@map("inventory_balances")
+}
+
+model InventoryMovement {
+  id            String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId      String                @map("branch_id") @db.Uuid
+  ingredientId  String                @map("ingredient_id") @db.Uuid
+  actorId       String                @map("actor_id") @db.Uuid
+  kind          InventoryMovementKind
+  sourceId      String                @map("source_id") @db.Uuid
+  delta         Decimal               @db.Decimal(18, 6)
+  quantityAfter Decimal               @map("quantity_after") @db.Decimal(18, 6)
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  branch     Branch     @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor      User       @relation("InventoryMovementActor", fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([kind, sourceId, branchId, ingredientId])
+  @@index([branchId, ingredientId, createdAt])
+  @@index([actorId])
+  @@map("inventory_movements")
 }
