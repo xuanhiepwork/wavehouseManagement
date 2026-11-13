@@ -82,5 +82,13 @@ export function createAuthGuards(
         next();
     };
 
-    return { requireAuth, requireAdminForMutations };
+    const requireAdmin: RequestHandler = (_req, res, next) => {
+        if (res.locals.authUser?.role !== 'ADMIN') {
+            res.status(403).json({ error: 'Forbidden' });
+            return;
+        }
+
+        next();
+    };
+    return { requireAuth, requireAdminForMutations, requireAdmin };
 }
