@@ -107,3 +107,17 @@ Backend listening on http://localhost:5000
 
 
 ---
+
+# SAO LƯU PRIMA SCHMA TRƯỚC KHI SỬA DATABASE
+
+cd D:\code\DoAn\WaveHouseManagement\backend
+
+$b4Baseline = Join-Path $env:TEMP (
+    'wavehouse_before_B4_' +
+    (Get-Date -Format 'yyyyMMdd_HHmmss') +
+    '.prisma'
+)
+
+Copy-Item .\prisma\schema.prisma $b4Baseline
+
+Write-Host "B4 BASELINE: $b4Baseline"
