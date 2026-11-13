@@ -18,6 +18,8 @@ import { recipeRouter, postgresRecipeRouter } from './routes/recipe.routes';
 import { recipePaths, recipeSchemas, postgresRecipeDocumentation } from './config/recipe.openapi';
 import type { createPostgresRecipeService } from './services/recipe.postgres.service';
 import { createAuthGuards } from './middleware/auth.middleware';
+import { createBranchRouter } from './routes/branch.routes';
+import { createUserRouter } from './routes/user.routes';
 
 // Explicit paths keep documentation working after TypeScript sources are compiled.
 const apiDocs = {
@@ -87,6 +89,28 @@ export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = ()
         const guards = createAuthGuards(options.authPrisma, sessions);
 
         app.use('/api/auth', createAuthRouter(options.authPrisma, sessions));
+
+        const revokeUserSessions = (userId: string) => {
+            for (const [token, session] of sessions) {
+                if (session.userId === userId) {
+                    sessions.delete(token);
+                }
+            }
+        };
+
+        app.use(
+            '/api/branches',
+            guards.requireAuth,
+            guards.requireAdmin,
+            createBranchRouter(options.authPrisma)
+        );
+
+        app.use(
+            '/api/users',
+            guards.requireAuth,
+            guards.requireAdmin,
+            createUserRouter(options.authPrisma, revokeUserSessions)
+        );
 
         for (const path of [
             '/api/ingredients',

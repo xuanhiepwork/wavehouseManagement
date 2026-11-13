@@ -32,7 +32,10 @@ function managedRole(value: unknown): value is ManagedRole {
     return value === 'STAFF' || value === 'BRANCH_MANAGER';
 }
 
-export function createUserRouter(prisma: PrismaClient) {
+export function createUserRouter(
+    prisma: PrismaClient,
+    revokeUserSessions: (userId: string) => void
+) {
     const router = Router();
 
     // GET /api/users?page=1
@@ -278,6 +281,7 @@ export function createUserRouter(prisma: PrismaClient) {
                 });
                 return;
             }
+            revokeUserSessions(id);
 
             const user = await prisma.user.findUnique({
                 where: { id },
@@ -323,6 +327,7 @@ export function createUserRouter(prisma: PrismaClient) {
                 });
                 return;
             }
+            revokeUserSessions(id);
 
             res.status(204).end();
         } catch {
