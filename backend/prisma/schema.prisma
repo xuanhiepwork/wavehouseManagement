@@ -32,7 +32,8 @@ model Ingredient {
   isActive          Boolean            @default(true) @map("is_active")
   createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  
+  recipeConsumptionItems RecipeConsumptionItem[]
+
   recipeIngredients RecipeIngredient[]
   inventoryBalances  InventoryBalance[]
   inventoryMovements InventoryMovement[]
@@ -70,6 +71,7 @@ model ProductVariant {
   product        Product     @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   recipes        Recipe[]    @relation("VariantRecipes")
   activeRecipe   Recipe?     @relation("ActiveRecipe", fields: [activeRecipeId, id], references: [id, productVariantId], onDelete: Restrict, onUpdate: Restrict)
+  recipeConsumptions RecipeConsumption[]
 
   @@unique([productId, size])
   @@index([activeRecipeId, id])
@@ -85,6 +87,7 @@ model Recipe {
   productVariant   ProductVariant     @relation("VariantRecipes", fields: [productVariantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   activeFor        ProductVariant[]   @relation("ActiveRecipe")
   ingredients      RecipeIngredient[]
+  consumptions RecipeConsumption[]
 
   @@unique([productVariantId, version])
   @@unique([id, productVariantId])
@@ -126,6 +129,7 @@ model Branch {
   goodsReceipts GoodsReceipt[]
   stockDocumentsSource      StockDocument[] @relation("StockDocumentSourceBranch")
   stockDocumentsDestination StockDocument[] @relation("StockDocumentDestinationBranch")
+  recipeConsumptions RecipeConsumption[]
 
   @@map("branches")
 }
@@ -147,6 +151,7 @@ model User {
   receiptsPosted  GoodsReceipt[] @relation("GoodsReceiptPoster")
   stockDocumentsCreated StockDocument[] @relation("StockDocumentCreator")
   stockDocumentsPosted  StockDocument[] @relation("StockDocumentPoster")
+  recipeConsumptionsCreated RecipeConsumption[] @relation("RecipeConsumptionCreator")
 
   @@index([branchId, isActive])
   @@map("users")
@@ -289,4 +294,39 @@ model StockDocumentItem {
   @@unique([documentId, ingredientId])
   @@index([ingredientId])
   @@map("stock_document_items")
+}
+
+model RecipeConsumption {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId          String   @unique @map("event_id") @db.Uuid
+  branchId         String   @map("branch_id") @db.Uuid
+  productVariantId String   @map("product_variant_id") @db.Uuid
+  recipeId         String   @map("recipe_id") @db.Uuid
+  units            Int
+  createdById      String   @map("created_by_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  branch         Branch         @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  recipe         Recipe         @relation(fields: [recipeId, productVariantId], references: [id, productVariantId], onDelete: Restrict, onUpdate: Restrict)
+  createdBy      User           @relation("RecipeConsumptionCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  items          RecipeConsumptionItem[]
+
+  @@index([branchId, createdAt])
+  @@index([productVariantId, createdAt])
+  @@map("recipe_consumptions")
+}
+
+model RecipeConsumptionItem {
+  consumptionId   String  @map("consumption_id") @db.Uuid
+  ingredientId    String  @map("ingredient_id") @db.Uuid
+  perUnitQuantity Decimal @map("per_unit_quantity") @db.Decimal(18, 6)
+  totalQuantity   Decimal @map("total_quantity") @db.Decimal(18, 6)
+
+  consumption RecipeConsumption @relation(fields: [consumptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient  Ingredient        @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([consumptionId, ingredientId])
+  @@index([ingredientId])
+  @@map("recipe_consumption_items")
 }

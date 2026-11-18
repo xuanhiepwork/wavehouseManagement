@@ -23,6 +23,7 @@ import { createUserRouter } from './routes/user.routes';
 import { createInventoryRouter } from './routes/inventory.routes';
 import { createGoodsReceiptRouter } from './routes/goods-receipt.routes';
 import { createStockDocumentRouter } from './routes/stock-document.routes';
+import { createRecipeConsumptionRouter } from './routes/recipe-consumption.routes';
 
 // Explicit paths keep documentation working after TypeScript sources are compiled.
 const apiDocs = {
@@ -137,6 +138,12 @@ export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = ()
             '/api/stock-transfers',
             guards.requireAuth,
             createStockDocumentRouter(options.authPrisma, 'TRANSFER')
+        );
+
+        app.use(
+            '/api/recipe-consumptions',
+            guards.requireAuth,
+            createRecipeConsumptionRouter(options.authPrisma)
         );
 
         for (const path of [
