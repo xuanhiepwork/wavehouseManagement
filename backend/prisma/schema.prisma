@@ -37,6 +37,7 @@ model Ingredient {
   inventoryBalances  InventoryBalance[]
   inventoryMovements InventoryMovement[]
   goodsReceiptItems GoodsReceiptItem[]
+  stockDocumentItems StockDocumentItem[]
 
   @@index([category, isActive])
   @@map("ingredients")
@@ -123,6 +124,8 @@ model Branch {
   inventoryBalances  InventoryBalance[]
   inventoryMovements InventoryMovement[]
   goodsReceipts GoodsReceipt[]
+  stockDocumentsSource      StockDocument[] @relation("StockDocumentSourceBranch")
+  stockDocumentsDestination StockDocument[] @relation("StockDocumentDestinationBranch")
 
   @@map("branches")
 }
@@ -142,6 +145,8 @@ model User {
   inventoryMovements InventoryMovement[] @relation("InventoryMovementActor")
   receiptsCreated GoodsReceipt[] @relation("GoodsReceiptCreator")
   receiptsPosted  GoodsReceipt[] @relation("GoodsReceiptPoster")
+  stockDocumentsCreated StockDocument[] @relation("StockDocumentCreator")
+  stockDocumentsPosted  StockDocument[] @relation("StockDocumentPoster")
 
   @@index([branchId, isActive])
   @@map("users")
@@ -234,4 +239,54 @@ model GoodsReceiptItem {
   @@unique([receiptId, ingredientId])
   @@index([ingredientId])
   @@map("goods_receipt_items")
+}
+
+enum StockDocumentType {
+  ISSUE
+  TRANSFER
+}
+
+enum StockDocumentStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+model StockDocument {
+  id                  String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                String              @unique @db.VarChar(40)
+  type                StockDocumentType
+  status              StockDocumentStatus @default(DRAFT)
+  sourceBranchId      String              @map("source_branch_id") @db.Uuid
+  destinationBranchId String?             @map("destination_branch_id") @db.Uuid
+  note                String?             @db.VarChar(500)
+  createdById         String              @map("created_by_id") @db.Uuid
+  postedById          String?             @map("posted_by_id") @db.Uuid
+  postedAt            DateTime?           @map("posted_at") @db.Timestamptz(6)
+  createdAt           DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sourceBranch      Branch  @relation("StockDocumentSourceBranch", fields: [sourceBranchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  destinationBranch Branch? @relation("StockDocumentDestinationBranch", fields: [destinationBranchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy         User    @relation("StockDocumentCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  postedBy          User?   @relation("StockDocumentPoster", fields: [postedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  items             StockDocumentItem[]
+
+  @@index([type, sourceBranchId, status, createdAt])
+  @@index([destinationBranchId, status, createdAt])
+  @@map("stock_documents")
+}
+
+model StockDocumentItem {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId   String  @map("document_id") @db.Uuid
+  ingredientId String  @map("ingredient_id") @db.Uuid
+  quantity     Decimal @db.Decimal(18, 6)
+
+  document   StockDocument @relation(fields: [documentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient    @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([documentId, ingredientId])
+  @@index([ingredientId])
+  @@map("stock_document_items")
 }
