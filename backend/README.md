@@ -95,6 +95,22 @@ finally {
 }
 
 
+## NHẬP MẬT KHẨU ADMIN AIVEN
+$secret = Read-Host 'Nhap mat khau Aiven avnadmin' -AsSecureString
+
+$ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+
+try {
+    $env:AIVEN_ADMIN_DB_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+}
+finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+    $secret.Dispose()
+}
+
+Write-Host 'AIVEN ADMIN ENV READY'
+
+
 #### Lưu ý: AIVEN_ADMIN_DB_PASSWORD của avnadmin không thay thế được AIVEN_DB_PASSWORD của ứng dụng.
 
 ## Bây giờ khởi động Backend:

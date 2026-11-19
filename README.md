@@ -472,9 +472,39 @@ finally {
     }
 }
 ```
+
+---
+
+# Triển khai lên Aiven Cloud
+
+## Trong Terminal có biến AIVEN_ADMIN_DB_PASSWORD:
+```
+.\node_modules\.bin\prisma.cmd migrate status `
+    --config .\prisma.config.aiven.ts
+```
+
+## Sau khi kiểm tra, chạy:
+```
+.\node_modules\.bin\prisma.cmd migrate deploy `
+    --config .\prisma.config.aiven.ts
+```
+
+## Build Backend:
+```
+.\node_modules\.bin\prisma.cmd generate
+if ($LASTEXITCODE -ne 0) { throw 'B7 GENERATE FAILED' }
+
+.\node_modules\.bin\tsc.cmd --noEmit
+if ($LASTEXITCODE -ne 0) { throw 'B7 TYPECHECK FAILED' }
+
+.\node_modules\.bin\tsc.cmd
+if ($LASTEXITCODE -ne 0) { throw 'B7 BUILD FAILED' }
+
+Write-Host 'B7 BUILD SUCCESS'
+```
+
 ---
 
 # CÁC BƯỚC KHỞI ĐỘNG DỰ ÁN - CHẠY DEMO
 
 
-B4 — Xây dựng chức năng quản lý nhập kho

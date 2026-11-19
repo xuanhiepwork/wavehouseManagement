@@ -75,3 +75,93 @@ ADD CONSTRAINT "inventory_movement_nonzero" CHECK ("delta" <> 0);
 
 ALTER TABLE "inventory_movements"
 ADD CONSTRAINT "inventory_movement_after_nonnegative" CHECK ("quantity_after" >= 0);
+
+-- B4: Receipt item integrity constraints
+
+ALTER TABLE "goods_receipt_items"
+ADD CONSTRAINT "goods_receipt_item_quantity_positive" CHECK ("quantity" > 0);
+
+ALTER TABLE "goods_receipt_items"
+ADD CONSTRAINT "goods_receipt_item_unit_cost_nonnegative" CHECK ("unit_cost" >= 0);
+
+-- B5: Stock document integrity constraints
+
+ALTER TABLE "stock_document_items"
+ADD CONSTRAINT "stock_document_item_quantity_positive" CHECK ("quantity" > 0);
+
+ALTER TABLE "stock_documents"
+ADD CONSTRAINT "stock_document_branch_shape" CHECK (
+    (
+        "type" = 'ISSUE'
+        AND "destination_branch_id" IS NULL
+    )
+    OR (
+        "type" = 'TRANSFER'
+        AND "destination_branch_id" IS NOT NULL
+        AND "destination_branch_id" <> "source_branch_id"
+    )
+);
+
+-- B5: Stock document integrity constraints
+
+ALTER TABLE "stock_document_items"
+ADD CONSTRAINT "stock_document_item_quantity_positive" CHECK ("quantity" > 0);
+
+ALTER TABLE "stock_documents"
+ADD CONSTRAINT "stock_document_branch_shape" CHECK (
+    (
+        "type" = 'ISSUE'
+        AND "destination_branch_id" IS NULL
+    )
+    OR (
+        "type" = 'TRANSFER'
+        AND "destination_branch_id" IS NOT NULL
+        AND "destination_branch_id" <> "source_branch_id"
+    )
+);
+
+ALTER TABLE "stock_documents"
+ADD CONSTRAINT "stock_document_post_state" CHECK (
+    (
+        "status" = 'POSTED'
+        AND "posted_by_id" IS NOT NULL
+        AND "posted_at" IS NOT NULL
+    )
+    OR (
+        "status" <> 'POSTED'
+        AND "posted_by_id" IS NULL
+        AND "posted_at" IS NULL
+    )
+);
+
+-- B5: Stock document integrity constraints
+
+ALTER TABLE "stock_document_items"
+ADD CONSTRAINT "stock_document_item_quantity_positive" CHECK ("quantity" > 0);
+
+ALTER TABLE "stock_documents"
+ADD CONSTRAINT "stock_document_branch_shape" CHECK (
+    (
+        "type" = 'ISSUE'
+        AND "destination_branch_id" IS NULL
+    )
+    OR (
+        "type" = 'TRANSFER'
+        AND "destination_branch_id" IS NOT NULL
+        AND "destination_branch_id" <> "source_branch_id"
+    )
+);
+
+ALTER TABLE "stock_documents"
+ADD CONSTRAINT "stock_document_post_state" CHECK (
+    (
+        "status" = 'POSTED'
+        AND "posted_by_id" IS NOT NULL
+        AND "posted_at" IS NOT NULL
+    )
+    OR (
+        "status" <> 'POSTED'
+        AND "posted_by_id" IS NULL
+        AND "posted_at" IS NULL
+    )
+);
