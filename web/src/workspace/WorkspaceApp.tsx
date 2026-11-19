@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import ExistingCatalog from '../App';
 import { restoreSession, signIn, signOut, type AuthSession, type UserRole } from './auth';
+import ReceivingPage from './receiving/ReceivingPage';
 import './WorkspaceApp.css';
 
 type Section =
@@ -181,7 +182,9 @@ export default function WorkspaceApp() {
                 <main className="wh-content">
                     {selected?.id === 'overview' ? (
                         <StartingPage role={session.user.role} onOpen={setActive} />
-                    ) : selected?.id === 'catalog' ? (
+                    ) : selected?.id === 'receiving' ? (
+            <ReceivingPage session={session} />
+          ) : selected?.id === 'catalog' ? (
                         <div className="wh-catalog-wrap">
                             <div className="wh-note"><strong>Catalog hiện có:</strong> giữ nguyên module cũ. Nếu request Catalog trả 401, bước tích hợp kế tiếp sẽ gắn Bearer token vào client tại <code>src/api/catalog.ts</code>.</div>
                             <ExistingCatalog />
