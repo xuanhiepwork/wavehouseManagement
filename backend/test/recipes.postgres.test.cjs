@@ -5,7 +5,7 @@ const { Prisma } = require('../dist/generated/prisma/client');
 const validation = require('../dist/validation/recipe.postgres.validation');
 const { serializeRecipe } = require('../dist/serialization/recipe');
 const { createPostgresRecipeService, verifyRecipeFoundation } = require('../dist/services/recipe.postgres.service');
-const { createApp } = require('../dist/app');
+const { createApp } = require('./helpers/catalog-app.cjs');
 const productId = randomUUID(), ingredientId = randomUUID();
 const input = () => ({ productId, size: 'M', ingredients: [{ ingredientId, quantity: '0.100000' }] });
 const row = () => { const id = randomUUID(); return { id, productVariantId: randomUUID(), version: 2,

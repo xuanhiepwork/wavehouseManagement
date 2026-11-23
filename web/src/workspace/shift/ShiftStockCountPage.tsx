@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AuthSession } from '../auth';
+import { ApiError } from '../api';
 import {
     approveCount,
     createCount,
@@ -41,23 +42,30 @@ function vietnamDate(): string {
 }
 
 function qtyValid(text: string, unit: string): boolean {
-    if (!/^\d+(?:\.\d{1,6})?$/.test(text)) return false;
-    const value = Number(text);
-    return Number.isFinite(value) && value >= 0 && value < 1e12
+    return /^(?:0|[1-9]\d{0,11})(?:\.\d{1,6})?$/.test(text)
         && (unit !== 'piece' || /^\d+$/.test(text));
 }
 
 function showQty(value: string | null): string {
     if (value === null || value === '') return '—';
-    const n = Number(value);
-    if (!Number.isFinite(n)) return value;
-    return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 6 }).format(n);
+    if (!/^-?\d+(?:\.\d{1,6})?$/.test(value)) return value;
+    const [integer, fraction = ''] = value.split('.');
+    const trimmed = fraction.replace(/0+$/, '');
+    return integer.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + (trimmed ? `,${trimmed}` : '');
 }
 
 function estimatedVariance(expected: string | null, actual: string): string {
-    if (expected === null || actual === '' || !Number.isFinite(Number(expected))) return '—';
-    const diff = Number(actual) - Number(expected);
-    return Number.isFinite(diff) ? `${diff > 0 ? '+' : ''}${showQty(String(Number(diff.toFixed(6))))}` : '—';
+    if (expected === null || !/^-?\d+(?:\.\d{1,6})?$/.test(expected) || !/^\d+(?:\.\d{1,6})?$/.test(actual)) return '—';
+    const scaled = (value: string) => {
+        const negative = value.startsWith('-');
+        const [integer, fraction = ''] = (negative ? value.slice(1) : value).split('.');
+        const amount = BigInt(integer) * 1_000_000n + BigInt(fraction.padEnd(6, '0'));
+        return negative ? -amount : amount;
+    };
+    const difference = scaled(actual) - scaled(expected);
+    const magnitude = difference < 0n ? -difference : difference;
+    const value = `${difference < 0n ? '-' : ''}${magnitude / 1_000_000n}.${String(magnitude % 1_000_000n).padStart(6, '0')}`;
+    return `${difference > 0n ? '+' : ''}${showQty(value)}`;
 }
 
 function message(error: unknown): string {
@@ -93,7 +101,9 @@ function mergeItems(template: IngredientLine[], saved: IngredientLine[]): Ingred
     return merged;
 }
 
-export default function ShiftStockCountPage({ session }: { session: AuthSession }) {
+type Props = { session: AuthSession; onDirtyChange?: (dirty: boolean) => void; onWorkingChange?: (working: boolean) => void };
+
+export default function ShiftStockCountPage({ session, onDirtyChange, onWorkingChange }: Props) {
     const canReview = session.user.role !== 'STAFF';
     const isAdmin = session.user.role === 'ADMIN';
     const [branchId, setBranchId] = useState(session.user.branchId ?? '');
@@ -111,11 +121,34 @@ export default function ShiftStockCountPage({ session }: { session: AuthSession 
     const [success, setSuccess] = useState('');
     const [version, setVersion] = useState(0);
     const [dirty, setDirty] = useState(false);
+    const [recoveryNeeded, setRecoveryNeeded] = useState(false);
+    const sessionRef = useRef(session); sessionRef.current = session;
+    const dirtyRef = useRef(dirty); dirtyRef.current = dirty;
+    const actionLock = useRef(false);
+    const alive = useRef(true);
+    const callbacks = useRef({ onDirtyChange, onWorkingChange }); callbacks.current = { onDirtyChange, onWorkingChange };
+    const loadedScope = useRef('');
+    const sessionScope = JSON.stringify([session.user.id, session.user.role, session.user.branchId]);
+
+    useEffect(() => {
+        alive.current = true;
+        const beforeUnload = (event: BeforeUnloadEvent) => {
+            if (dirtyRef.current || actionLock.current) { event.preventDefault(); event.returnValue = ''; }
+        };
+        window.addEventListener('beforeunload', beforeUnload);
+        return () => {
+            alive.current = false; window.removeEventListener('beforeunload', beforeUnload);
+            callbacks.current.onDirtyChange?.(false); callbacks.current.onWorkingChange?.(false);
+        };
+    }, []);
+    useEffect(() => { callbacks.current.onDirtyChange?.(dirty); }, [dirty]);
+    useEffect(() => { callbacks.current.onWorkingChange?.(working); }, [working]);
+    useEffect(() => { if (!isAdmin) setBranchId(session.user.branchId ?? ''); }, [isAdmin, session.user.branchId]);
 
     useEffect(() => {
         if (!isAdmin) return;
         let active = true;
-        void loadBranchList(session).then(list => {
+        void loadBranchList(sessionRef.current).then(list => {
             if (!active) return;
             setBranches(list);
             if (list.length) setBranchId(current => current || list[0].id);
@@ -124,17 +157,18 @@ export default function ShiftStockCountPage({ session }: { session: AuthSession 
         });
         return () => { active = false; };
         // Branch list is only loaded when the signed-in user changes.
-    }, [session, isAdmin]);
+    }, [sessionScope, isAdmin]);
 
     useEffect(() => {
-        setCount(null);
-        setItems([]);
-        setNote('');
-        setFilter('');
-        setReturnReason('');
-        setDirty(false);
+        const scope = JSON.stringify([sessionScope, branchId, businessDate, shift]);
+        if (loadedScope.current !== scope) {
+            loadedScope.current = scope;
+            setCount(null); setItems([]); setNote(''); setFilter(''); setReturnReason('');
+            setDirty(false); setRecoveryNeeded(false); setSuccess('');
+        }
         if (!UUID_PATTERN.test(branchId)) {
             setError('Hãy chọn chi nhánh hợp lệ để tải danh sách kiểm kê.');
+            setLoading(false);
             return;
         }
 
@@ -143,24 +177,28 @@ export default function ShiftStockCountPage({ session }: { session: AuthSession 
         setError('');
 
         void Promise.all([
-            loadTemplate(session, branchId),
-            listCounts(session, branchId),
+            loadTemplate(sessionRef.current, branchId),
+            listCounts(sessionRef.current, branchId, { businessDate, shift }),
         ]).then(async ([template, counts]) => {
             const match = counts.find(row => row.branchId === branchId
                 && row.businessDate === businessDate && row.shift === shift);
-            const selected = match ? await getCount(session, match.id) : null;
+            const selected = match ? await getCount(sessionRef.current, match.id) : null;
+            if (selected && (selected.branchId !== branchId || selected.businessDate !== businessDate || selected.shift !== shift)) {
+                throw new Error('Chi tiết phiếu không khớp chi nhánh/ngày/ca đã chọn.');
+            }
             if (!active) return;
             setCount(selected);
             setItems(selected ? mergeItems(template, selected.items) : template);
             setNote(selected?.note ?? '');
             setReturnReason(selected?.returnReason ?? '');
+            setDirty(false); setRecoveryNeeded(false);
         }).catch(cause => {
             if (active) setError(message(cause));
         }).finally(() => {
             if (active) setLoading(false);
         });
         return () => { active = false; };
-    }, [branchId, businessDate, shift, version, session]);
+    }, [branchId, businessDate, shift, version, sessionScope]);
 
     const filteredItems = useMemo(() => items.filter(item =>
         `${item.code} ${item.name}`.toLocaleLowerCase('vi-VN').includes(filter.toLocaleLowerCase('vi-VN'))
@@ -168,7 +206,7 @@ export default function ShiftStockCountPage({ session }: { session: AuthSession 
     const completed = useMemo(() => items.filter(item => qtyValid(item.countedQuantity, item.unit)).length, [items]);
     const editable = !count || count.status === 'DRAFT' || count.status === 'RETURNED';
     const complete = items.length > 0 && completed === items.length;
-    const safeToSubmit = Boolean(count && editable && !dirty && complete);
+    const safeToSubmit = Boolean(count && editable && !dirty && complete && !recoveryNeeded);
 
     function setQuantity(ingredientId: string, value: string) {
         if (!editable || working) return;
@@ -179,23 +217,56 @@ export default function ShiftStockCountPage({ session }: { session: AuthSession 
         setSuccess('');
     }
 
-    function reload() { setVersion(value => value + 1); }
+    function reload() {
+        if (actionLock.current || loading) return;
+        if ((dirty || recoveryNeeded) && !window.confirm('Tải lại sẽ thay các số đang nhập bằng dữ liệu đã lưu trên máy chủ. Tiếp tục?')) return;
+        setVersion(value => value + 1);
+    }
 
     async function runAction(action: () => Promise<void>, successText: string) {
+        if (actionLock.current || recoveryNeeded || loading) return;
+        actionLock.current = true;
         setWorking(true);
         setError('');
         setSuccess('');
         try {
             await action();
+            if (!alive.current) return;
             setSuccess(successText);
             setDirty(false);
             // Reload the persisted count; server owns status and variance.
             setVersion(value => value + 1);
         } catch (cause) {
-            setError(message(cause));
+            if (alive.current) {
+                setError(message(cause));
+                if (cause instanceof ApiError && cause.uncertain) { setRecoveryNeeded(true); setDirty(true); }
+            }
         } finally {
-            setWorking(false);
+            actionLock.current = false;
+            if (alive.current) setWorking(false);
         }
+    }
+
+    async function reconcile() {
+        if (actionLock.current || loading || !UUID_PATTERN.test(branchId)) return;
+        actionLock.current = true; setWorking(true); setError(''); setSuccess('');
+        try {
+            const counts = await listCounts(sessionRef.current, branchId, { businessDate, shift });
+            const persisted = counts[0] ? await getCount(sessionRef.current, counts[0].id) : null;
+            if (persisted && (persisted.branchId !== branchId || persisted.businessDate !== businessDate || persisted.shift !== shift)) {
+                throw new Error('Chi tiết phiếu không khớp chi nhánh/ngày/ca đã chọn.');
+            }
+            if (!alive.current) return;
+            // Reconcile identity and status only. Never replace a user's quantities
+            // after a failed write; an existing unique draft can then be updated.
+            setCount(persisted); setRecoveryNeeded(false);
+            const quantitiesKey = (lines: IngredientLine[]) => JSON.stringify(lines.map(line => [line.ingredientId, line.countedQuantity]).sort(([first], [second]) => first.localeCompare(second)));
+            if (!persisted || quantitiesKey(items) !== quantitiesKey(persisted.items) || note.trim() !== persisted.note) setDirty(true);
+            setSuccess(persisted
+                ? `Đã đối chiếu phiếu ${persisted.id}: ${STATUS_LABELS[persisted.status]}. Số đang nhập vẫn được giữ; tải lại nếu muốn dùng số đã lưu.`
+                : 'Máy chủ chưa có phiếu cho chi nhánh/ngày/ca này. Số đang nhập vẫn được giữ; có thể lưu bản nháp sau khi đối chiếu.');
+        } catch (cause) { if (alive.current) setError(message(cause)); }
+        finally { actionLock.current = false; if (alive.current) setWorking(false); }
     }
 
     function payloadLines() {
@@ -203,27 +274,30 @@ export default function ShiftStockCountPage({ session }: { session: AuthSession 
     }
 
     async function save() {
-        if (!complete || !editable || !UUID_PATTERN.test(branchId)) return;
+        if (actionLock.current || recoveryNeeded || !complete || !editable || !UUID_PATTERN.test(branchId)) return;
         const payload = { branchId, businessDate, shift, note: note.trim(), items: payloadLines() };
         await runAction(async () => {
             if (count) await updateCount(session, count.id, { note: payload.note, items: payload.items });
-            else await createCount(session, payload);
+            else {
+                const id = await createCount(sessionRef.current, payload);
+                if (alive.current) setCount({ id, branchId, businessDate, shift, status: 'DRAFT', note: payload.note, returnReason: '', items: [...items] });
+            }
         }, 'Đã lưu bản nháp kiểm kê.');
     }
 
     async function submit() {
-        if (!count || !safeToSubmit || !window.confirm('Gửi phiếu kiểm kê để quản lý duyệt? Sau khi gửi, nhân viên không thể sửa đến khi phiếu được trả lại.')) return;
+        if (actionLock.current || !count || !safeToSubmit || !window.confirm('Gửi phiếu kiểm kê để quản lý duyệt? Sau khi gửi, nhân viên không thể sửa đến khi phiếu được trả lại.')) return;
         await runAction(() => submitCount(session, count.id), 'Đã gửi phiếu để quản lý duyệt.');
     }
 
     async function approve() {
-        if (!count || count.status !== 'SUBMITTED' || !canReview
+        if (actionLock.current || !count || count.status !== 'SUBMITTED' || !canReview
             || !window.confirm('Duyệt phiếu sẽ cập nhật tồn kho theo chênh lệch kiểm kê. Bạn đã đối chiếu số liệu?')) return;
         await runAction(() => approveCount(session, count.id), 'Phiếu đã được duyệt và cập nhật số dư theo quy trình B6.');
     }
 
     async function sendBack() {
-        if (!count || count.status !== 'SUBMITTED' || !canReview || returnReason.trim().length < 3) return;
+        if (actionLock.current || !count || count.status !== 'SUBMITTED' || !canReview || returnReason.trim().length < 3) return;
         await runAction(() => returnCount(session, count.id, returnReason.trim()), 'Đã trả lại phiếu để nhân viên chỉnh sửa.');
     }
 
@@ -233,6 +307,7 @@ export default function ShiftStockCountPage({ session }: { session: AuthSession 
     return (
         <section className="w2-page">
             {sectionHeader('Kiểm kê cuối ca', 'Nhập tồn thực đếm, lưu bản nháp và chuyển quản lý duyệt. Mọi số liệu đều lấy từ Backend, không dùng dữ liệu minh họa.')}
+            <div className="w2-alert" role="note">Hoàn tất xác nhận mọi phiếu chuyển kho đến trước khi kiểm đếm và gửi phiếu. Nếu có nhận hàng sau lúc gửi, quản lý phải trả phiếu để kiểm đếm và gửi lại.</div>
             <div className="w2-panel w2-filters">
                 <div className="w2-field w2-branch-field">
                     <label htmlFor="w2-branch">Chi nhánh kiểm kê</label>
@@ -241,7 +316,7 @@ export default function ShiftStockCountPage({ session }: { session: AuthSession 
                             {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.code} — {branch.name}</option>)}
                         </select>
                     ) : isAdmin ? (
-                        <input id="w2-branch" value={branchId} disabled={inProgress || dirty} placeholder="UUID chi nhánh" onChange={event => setBranchId(event.target.value)} />
+                        <input id="w2-branch" value={branchId} disabled={inProgress || dirty} placeholder="UUID chi nhánh" onChange={event => setBranchId(event.target.value.toLowerCase())} />
                     ) : (
                         <input id="w2-branch" value={session.user.branchId ?? ''} readOnly aria-label="Chi nhánh được phân quyền" />
                     )}
@@ -257,12 +332,13 @@ export default function ShiftStockCountPage({ session }: { session: AuthSession 
                         {Object.entries(SHIFT_LABELS).map(([key, title]) => <option key={key} value={key}>{title}</option>)}
                     </select>
                 </div>
-                <button className="w2-secondary w2-refresh" type="button" disabled={inProgress || dirty} onClick={reload}>↻ Tải lại</button>
+                <button className="w2-secondary w2-refresh" type="button" disabled={inProgress} onClick={reload}>↻ Tải lại</button>
                 {dirty && <p className="w2-dirty">Bạn đang sửa số liệu. Hãy lưu bản nháp trước khi đổi chi nhánh/ngày/ca.</p>}
             </div>
 
             {error && <div className="w2-alert w2-error" role="alert">{error}</div>}
             {success && <div className="w2-alert w2-success" role="status">{success}</div>}
+            {recoveryNeeded && <div className="w2-alert" role="alert">Yêu cầu trước có thể đã được lưu. Tạm dừng gửi lại; đối chiếu trạng thái máy chủ trước khi tiếp tục. Số đang nhập vẫn được giữ.</div>}
 
             <div className="w2-stats">
                 <div className="w2-stat"><span>Tình trạng phiếu</span><strong>{loading ? 'Đang tải…' : count ? STATUS_LABELS[count.status] : 'Chưa lập'}</strong></div>
@@ -312,21 +388,22 @@ export default function ShiftStockCountPage({ session }: { session: AuthSession 
                     <p>{count ? `Mã phiếu: ${count.id}` : 'Chưa có phiếu cho chi nhánh, ngày và ca đã chọn.'}</p>
                     {editable ? (
                         <>
-                            <button type="button" className="w2-primary" disabled={inProgress || !complete} onClick={() => { void save(); }}>{working ? 'Đang xử lý…' : count ? 'Lưu chỉnh sửa' : 'Lưu bản nháp'}</button>
+                            <button type="button" className="w2-primary" disabled={inProgress || recoveryNeeded || !complete} onClick={() => { void save(); }}>{working ? 'Đang xử lý…' : count ? 'Lưu chỉnh sửa' : 'Lưu bản nháp'}</button>
                             <button type="button" className="w2-secondary" disabled={inProgress || !safeToSubmit} onClick={() => { void submit(); }}>Gửi quản lý duyệt</button>
                             <small>Chỉ gửi duyệt sau khi đã nhập đủ nguyên liệu và lưu bản nháp. Không tạo lại phiếu nếu lưu gặp lỗi mạng.</small>
                         </>
                     ) : (
                         <span className="w2-status">{count ? STATUS_LABELS[count.status] : ''} — không được sửa số liệu</span>
                     )}
+                    <button type="button" className="w2-secondary" disabled={inProgress || !UUID_PATTERN.test(branchId)} onClick={() => { void reconcile(); }}>Đối chiếu trạng thái, giữ số đang nhập</button>
                     {canReview && count?.status === 'SUBMITTED' && (
                         <div className="w2-review">
                             <div className="w2-separator" />
                             <strong>Quản lý xét duyệt</strong>
-                            <button type="button" className="w2-primary" disabled={inProgress} onClick={() => { void approve(); }}>Duyệt & điều chỉnh tồn</button>
+                            <button type="button" className="w2-primary" disabled={inProgress || recoveryNeeded} onClick={() => { void approve(); }}>Duyệt & điều chỉnh tồn</button>
                             <label htmlFor="w2-reason">Lý do yêu cầu kiểm kê lại</label>
-                            <textarea id="w2-reason" rows={2} maxLength={500} value={returnReason} disabled={inProgress} onChange={event => setReturnReason(event.target.value)} placeholder="Cần kiểm tra lại số lượng…" />
-                            <button type="button" className="w2-secondary" disabled={inProgress || returnReason.trim().length < 3} onClick={() => { void sendBack(); }}>Trả phiếu</button>
+                            <textarea id="w2-reason" rows={2} maxLength={500} value={returnReason} disabled={inProgress} onChange={event => { setReturnReason(event.target.value); setDirty(true); }} placeholder="Cần kiểm tra lại số lượng…" />
+                            <button type="button" className="w2-secondary" disabled={inProgress || recoveryNeeded || returnReason.trim().length < 3} onClick={() => { void sendBack(); }}>Trả phiếu</button>
                         </div>
                     )}
                 </div>

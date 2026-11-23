@@ -92,3 +92,10 @@ body:has(.wh-root), body:has(.wh-login-screen), body:has(.wh-loading) {
   .wh-login-panel { padding: 20px; }
   .wh-login-form { padding: 26px; }
 }
+.wh-workspace-pages { min-width: 0; border: 0; padding: 0; margin: 0; }
+.wh-root [hidden] { display: none !important; }
+.wh-editor-notice { padding: 10px 14px; margin: 0 0 18px; border: 1px solid #e7d9b3; background: #fff8e7; color: #77591c; border-radius: 9px; font-size: 12px; line-height: 1.6; }
+.wh-session-refresh { background: #fff7e4; border: 1px solid #e0bd70; color: #684b16; border-radius: 12px; padding: 18px; margin-bottom: 20px; }
+.wh-session-refresh form { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+.wh-session-refresh label { display: grid; gap: 6px; font-size: 12px; }
+.wh-session-refresh input, .wh-session-refresh button { border: 1px solid #c6b88f; border-radius: 7px; padding: 9px 12px; background: white; color: #173640; }

@@ -5,7 +5,7 @@ const { Prisma } = require('../dist/generated/prisma/client');
 const validation = require('../dist/validation/product.postgres.validation');
 const { serializeProduct } = require('../dist/serialization/product');
 const { createPostgresProductService } = require('../dist/services/product.postgres.service');
-const { createApp } = require('../dist/app');
+const { createApp } = require('./helpers/catalog-app.cjs');
 const input = () => ({ code: ' latte ', name: ' Latte ', category: ' Coffee ', prices: [{ size: 'M', price: '0.1000' }] });
 const row = () => ({ id: randomUUID(), code: 'LATTE', name: 'Latte', category: 'Coffee', description: null, imageUrl: '',
     isAvailable: true, createdAt: new Date('2026-01-01'), updatedAt: new Date('2026-01-01'),
@@ -77,7 +77,7 @@ test('PostgreSQL Product error mapping is constraint-specific and retries only c
 test('PostgreSQL Product HTTP input guards, response contracts and error redaction', async t => {
     const before = { NODE_ENV: process.env.NODE_ENV, CATALOG_INGREDIENT_STORE: process.env.CATALOG_INGREDIENT_STORE, CATALOG_PRODUCT_STORE: process.env.CATALOG_PRODUCT_STORE };
     t.after(() => { for (const [key, value] of Object.entries(before)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
-    Object.assign(process.env, { NODE_ENV: 'test', CATALOG_INGREDIENT_STORE: 'mongodb', CATALOG_PRODUCT_STORE: 'postgres' });
+    Object.assign(process.env, { NODE_ENV: 'test', CATALOG_INGREDIENT_STORE: 'postgres', CATALOG_PRODUCT_STORE: 'postgres' });
     let failure; const calls = []; const record = serializeProduct(row()); const logs = [];
     t.mock.method(console, 'error', (...args) => logs.push(args));
     const service = { createProduct: async data => { calls.push(data); if (failure) throw failure; return record; },
@@ -103,7 +103,7 @@ test('PostgreSQL Product HTTP input guards, response contracts and error redacti
         assert.equal(docs.components.schemas.Product.properties._id.format, 'uuid'); assert.equal(docs.components.schemas.Product.properties.__v, undefined);
         assert.equal(docs.components.schemas.ProductPrice.properties.price.type, 'string');
         assert.equal(docs.components.schemas.PostgresProductPriceInput.properties.price.oneOf.length, 2);
-        assert.equal(docs.components.schemas.Ingredient.properties.__v.type, 'integer');
+        assert.equal(docs.components.schemas.Ingredient.properties.__v, undefined);
         failure = new Error('postgresql://private-password@host/database');
         assert.deepEqual(await request('', 'POST', input()), { status: 500, body: { error: 'Internal server error' } });
         assert.doesNotMatch(JSON.stringify(logs), /private-password|postgresql|adapter/);

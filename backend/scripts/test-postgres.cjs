@@ -52,12 +52,8 @@ async function main() {
     const client = await connectTestDatabase(connectionString);
     await client.end();
     const environment = { ...process.env, DATABASE_URL: connectionString, SHADOW_DATABASE_URL: '', TEST_DATABASE_URL: connectionString,
-        NODE_ENV: 'test', CATALOG_INGREDIENT_STORE: 'mongodb', CATALOG_PRODUCT_STORE: 'mongodb', CATALOG_RECIPE_STORE: 'mongodb' };
-    const migration = spawnSync(process.execPath, [require.resolve('prisma/build/index.js'), 'migrate', 'deploy'], {
-        cwd: path.resolve(__dirname, '..'), env: environment, encoding: 'utf8', timeout: 60000,
-    });
-    if (migration.status !== 0) throw new Error('Test migration failed; CLI output withheld to protect credentials.');
-    console.log('PASSED: isolated test target verified and reviewed migrations deployed.');
+        NODE_ENV: 'test', CATALOG_POSTGRES_TARGET: 'local', CATALOG_INGREDIENT_STORE: 'postgres', CATALOG_PRODUCT_STORE: 'postgres', CATALOG_RECIPE_STORE: 'postgres' };
+    console.log('PASSED: isolated test target verified. Existing schema required; no migrations run.');
     const result = spawnSync(process.execPath, ['--test', 'test/postgres.integration.test.cjs', 'test/ingredients.postgres.integration.test.cjs', 'test/products.postgres.integration.test.cjs', 'test/recipes.postgres.integration.test.cjs'], {
         cwd: path.resolve(__dirname, '..'), env: environment, stdio: 'inherit', timeout: 60000,
     });

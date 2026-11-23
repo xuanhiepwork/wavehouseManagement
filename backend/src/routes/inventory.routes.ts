@@ -8,6 +8,17 @@ type AuthUser = {
     branchId: string | null;
 };
 
+// Keep metadata tied to the ingredient referenced by each persisted balance or
+// movement. Clients must not infer units or minimum stock from display labels.
+const ingredientSelect = {
+    id: true,
+    code: true,
+    name: true,
+    unit: true,
+    minStock: true,
+    isActive: true,
+} as const;
+
 export function createInventoryRouter(prisma: PrismaClient) {
     const router = Router();
 
@@ -61,26 +72,41 @@ export function createInventoryRouter(prisma: PrismaClient) {
     // GET /api/inventory/balances?branchId=<uuid>&page=1
     router.get('/balances', async (req, res) => {
         const page = readPage(req.query.page);
+        const ingredientId = req.query.ingredientId;
 
-        if (page === null) {
-            res.status(400).json({ error: 'Invalid page' });
+        if (
+            page === null ||
+            (
+                ingredientId !== undefined &&
+                (
+                    typeof ingredientId !== 'string' ||
+                    !UUID_RE.test(ingredientId)
+                )
+            )
+        ) {
+            res.status(400).json({ error: 'Invalid query' });
             return;
         }
 
         const branchId = res.locals.inventoryBranchId as string;
+        const where = {
+            branchId,
+            ...(typeof ingredientId === 'string' ? { ingredientId } : {}),
+        };
 
         try {
             const [total, items] = await Promise.all([
                 prisma.inventoryBalance.count({
-                    where: { branchId },
+                    where,
                 }),
                 prisma.inventoryBalance.findMany({
-                    where: { branchId },
+                    where,
                     select: {
                         branchId: true,
                         ingredientId: true,
                         quantity: true,
                         updatedAt: true,
+                        ingredient: { select: ingredientSelect },
                     },
                     orderBy: { ingredientId: 'asc' },
                     skip: (page - 1) * 50,
@@ -138,6 +164,7 @@ export function createInventoryRouter(prisma: PrismaClient) {
                         delta: true,
                         quantityAfter: true,
                         createdAt: true,
+                        ingredient: { select: ingredientSelect },
                     },
                     orderBy: [
                         { createdAt: 'desc' },

@@ -39,6 +39,7 @@ model Ingredient {
   goodsReceiptItems GoodsReceiptItem[]
   stockDocumentItems StockDocumentItem[]
   shiftStockCountItems ShiftStockCountItem[]
+  transferReceiptItems TransferReceiptItem[]
 
   @@index([category, isActive])
   @@map("ingredients")
@@ -55,6 +56,7 @@ model Product {
   createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   variants    ProductVariant[]
+  salesReportLines SalesReportLine[]
 
   @@index([category, isAvailable])
   @@map("products")
@@ -86,6 +88,7 @@ model Recipe {
   productVariant   ProductVariant     @relation("VariantRecipes", fields: [productVariantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   activeFor        ProductVariant[]   @relation("ActiveRecipe")
   ingredients      RecipeIngredient[]
+  salesRecipeEvidence SalesRecipeEvidence[]
 
   @@unique([productVariantId, version])
   @@unique([id, productVariantId])
@@ -118,6 +121,8 @@ model Branch {
   code      String   @unique @db.VarChar(32)
   name      String   @db.VarChar(150)
   isActive  Boolean  @default(true) @map("is_active")
+  receivingRevision Int @default(0) @map("receiving_revision")
+  inventoryRevision Int @default(0) @map("inventory_revision")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -128,6 +133,7 @@ model Branch {
   stockDocumentsSource      StockDocument[] @relation("StockDocumentSourceBranch")
   stockDocumentsDestination StockDocument[] @relation("StockDocumentDestinationBranch")
   shiftStockCounts ShiftStockCount[]
+  salesReports SalesReport[]
 
   @@map("branches")
 }
@@ -151,6 +157,14 @@ model User {
   stockDocumentsPosted  StockDocument[] @relation("StockDocumentPoster")
   shiftCountsCreated  ShiftStockCount[] @relation("ShiftCountCreator")
   shiftCountsApproved ShiftStockCount[] @relation("ShiftCountApprover")
+  transferReceiptsCreated TransferReceipt[] @relation("TransferReceiptCreator")
+  transferReceiptsReceived TransferReceipt[] @relation("TransferReceiptReceiver")
+  salesReportsCreated SalesReport[] @relation("SalesReportCreator")
+  salesReportsSubmitted SalesReport[] @relation("SalesReportSubmitter")
+  salesReportsReviewed SalesReport[] @relation("SalesReportReviewer")
+  salesRevisions SalesReportRevision[] @relation("SalesRevisionCreator")
+  salesReportEvents SalesReportEvent[]
+  salesRecipeEvidenceAttestations SalesRecipeEvidence[]
 
   @@index([branchId, isActive])
   @@map("users")
@@ -257,6 +271,7 @@ enum StockDocumentStatus {
 }
 
 model StockDocument {
+  legacyReceivingRequired Boolean @default(false) @map("legacy_receiving_required")
   id                  String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   code                String              @unique @db.VarChar(40)
   type                StockDocumentType
@@ -275,6 +290,7 @@ model StockDocument {
   createdBy         User    @relation("StockDocumentCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
   postedBy          User?   @relation("StockDocumentPoster", fields: [postedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
   items             StockDocumentItem[]
+  transferReceipt   TransferReceipt?
 
   @@index([type, sourceBranchId, status, createdAt])
   @@index([destinationBranchId, status, createdAt])
@@ -319,6 +335,8 @@ model ShiftStockCount {
   createdById   String                @map("created_by_id") @db.Uuid
   approvedById  String?               @map("approved_by_id") @db.Uuid
   submittedAt   DateTime?             @map("submitted_at") @db.Timestamptz(6)
+  submittedReceivingRevision Int?     @map("submitted_receiving_revision")
+  submittedInventoryRevision Int?     @map("submitted_inventory_revision")
   approvedAt    DateTime?             @map("approved_at") @db.Timestamptz(6)
   createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -362,4 +380,243 @@ model DemandCalendarOverride {
   updatedAt    DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("demand_calendar_overrides")
+}
+
+enum TransferReceiptStatus {
+  DRAFT
+  CONFIRMED
+}
+
+model TransferReceipt {
+  id              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stockDocumentId String                @unique @map("stock_document_id") @db.Uuid
+  status          TransferReceiptStatus @default(DRAFT)
+  version         Int                   @default(1)
+  note            String?               @db.VarChar(500)
+  createdById     String                @map("created_by_id") @db.Uuid
+  receivedById    String?               @map("received_by_id") @db.Uuid
+  confirmedAt     DateTime?             @map("confirmed_at") @db.Timestamptz(6)
+  physicalReceivedAt DateTime?          @map("physical_received_at") @db.Timestamptz(6)
+  legacyEvidence  String?               @map("legacy_evidence") @db.VarChar(1000)
+  createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  stockDocument StockDocument @relation(fields: [stockDocumentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User @relation("TransferReceiptCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  receivedBy User? @relation("TransferReceiptReceiver", fields: [receivedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  items TransferReceiptItem[]
+
+  @@index([status, updatedAt])
+  @@index([createdById])
+  @@index([receivedById])
+  @@map("transfer_receipts")
+}
+
+model TransferReceiptItem {
+  receiptId         String   @map("receipt_id") @db.Uuid
+  ingredientId      String   @map("ingredient_id") @db.Uuid
+  ingredientCode    String   @map("ingredient_code") @db.VarChar(64)
+  ingredientName    String   @map("ingredient_name") @db.VarChar(200)
+  unit              BaseUnit
+  plannedQuantity   Decimal  @map("planned_quantity") @db.Decimal(18, 6)
+  receivedQuantity  Decimal  @map("received_quantity") @db.Decimal(18, 6)
+  damagedQuantity   Decimal  @map("damaged_quantity") @db.Decimal(18, 6)
+  discrepancyReason String?  @map("discrepancy_reason") @db.VarChar(300)
+
+  receipt TransferReceipt @relation(fields: [receiptId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([receiptId, ingredientId])
+  @@index([ingredientId])
+  @@map("transfer_receipt_items")
+}
+
+enum SalesReportStatus {
+  DRAFT
+  SUBMITTED
+  RETURNED
+  APPROVED
+}
+
+enum SalesPaymentChannel {
+  CASH
+  BANK_TRANSFER
+  MOMO
+  GRAB
+  OTHER
+}
+
+enum SalesReportEventType {
+  CREATED
+  UPDATED
+  SUBMITTED
+  RETURNED
+  APPROVED
+}
+
+model SalesReport {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId String @map("branch_id") @db.Uuid
+  businessDate DateTime @map("business_date") @db.Date
+  shift WorkShift
+  status SalesReportStatus @default(DRAFT)
+  version Int @default(1)
+  currentRevisionNumber Int @default(1) @map("current_revision_number")
+  submittedRevisionNumber Int? @map("submitted_revision_number")
+  approvedRevisionNumber Int? @map("approved_revision_number")
+  createdById String @map("created_by_id") @db.Uuid
+  submittedById String? @map("submitted_by_id") @db.Uuid
+  reviewedById String? @map("reviewed_by_id") @db.Uuid
+  submittedAt DateTime? @map("submitted_at") @db.Timestamptz(6)
+  reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  approvedAt DateTime? @map("approved_at") @db.Timestamptz(6)
+  returnReason String? @map("return_reason") @db.VarChar(1000)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User @relation("SalesReportCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  submittedBy User? @relation("SalesReportSubmitter", fields: [submittedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reviewedBy User? @relation("SalesReportReviewer", fields: [reviewedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  revisions SalesReportRevision[]
+  events SalesReportEvent[]
+
+  @@unique([branchId, businessDate, shift])
+  @@index([branchId, status, businessDate])
+  @@index([status, businessDate])
+  @@index([createdById])
+  @@index([submittedById])
+  @@index([reviewedById])
+  @@map("sales_reports")
+}
+
+// Every save appends a complete revision; submitted snapshots are never edited.
+model SalesReportRevision {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId String @map("report_id") @db.Uuid
+  number Int
+  createdById String @map("created_by_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  note String? @db.VarChar(1500)
+  discounts Decimal @db.Decimal(18, 0)
+  recognizedRefunds Decimal @map("recognized_refunds") @db.Decimal(18, 0)
+  grossSales Decimal @map("gross_sales") @db.Decimal(18, 0)
+  netExpected Decimal @map("net_expected") @db.Decimal(18, 0)
+  netRecorded Decimal @map("net_recorded") @db.Decimal(18, 0)
+  salesDifference Decimal @map("sales_difference") @db.Decimal(18, 0)
+  expectedCash Decimal @map("expected_cash") @db.Decimal(18, 0)
+  cashDifference Decimal? @map("cash_difference") @db.Decimal(18, 0)
+
+  report SalesReport @relation(fields: [reportId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User @relation("SalesRevisionCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lines SalesReportLine[]
+  payments SalesPayment[]
+  expenses SalesExpense[]
+  cash CashReconciliation?
+  events SalesReportEvent[]
+
+  @@unique([reportId, number])
+  @@index([createdById])
+  @@map("sales_report_revisions")
+}
+
+model SalesReportLine {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  revisionId String @map("revision_id") @db.Uuid
+  position Int
+  productId String? @map("product_id") @db.Uuid
+  productNameSnapshot String @map("product_name_snapshot") @db.VarChar(200)
+  size String @db.VarChar(10)
+  unitPriceSnapshot Decimal @map("unit_price_snapshot") @db.Decimal(18, 0)
+  quantity Int
+  note String? @db.VarChar(240)
+
+  revision SalesReportRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  product Product? @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  recipeEvidence SalesRecipeEvidence?
+
+  @@unique([revisionId, position])
+  @@index([productId])
+  @@map("sales_report_lines")
+}
+
+model SalesPayment {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  revisionId String @map("revision_id") @db.Uuid
+  channel SalesPaymentChannel
+  collectedAmount Decimal @map("collected_amount") @db.Decimal(18, 0)
+  refundedAmount Decimal @map("refunded_amount") @db.Decimal(18, 0)
+  platformFee Decimal @map("platform_fee") @db.Decimal(18, 0)
+  settlementDifference Decimal @map("settlement_difference") @db.Decimal(18, 0)
+  note String? @db.VarChar(300)
+  revision SalesReportRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([revisionId, channel])
+  @@map("sales_report_payments")
+}
+
+model SalesExpense {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  revisionId String @map("revision_id") @db.Uuid
+  position Int
+  channel SalesPaymentChannel
+  description String @db.VarChar(300)
+  amount Decimal @db.Decimal(18, 0)
+  revision SalesReportRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([revisionId, position])
+  @@map("sales_report_expenses")
+}
+
+model CashReconciliation {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  revisionId String @unique @map("revision_id") @db.Uuid
+  openingCash Decimal @map("opening_cash") @db.Decimal(18, 0)
+  cashHandovers Decimal @map("cash_handovers") @db.Decimal(18, 0)
+  closingCashActual Decimal? @map("closing_cash_actual") @db.Decimal(18, 0)
+  revision SalesReportRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@map("sales_cash_reconciliations")
+}
+
+model SalesReportEvent {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId String @map("report_id") @db.Uuid
+  revisionNumber Int @map("revision_number")
+  actorId String @map("actor_id") @db.Uuid
+  type SalesReportEventType
+  reason String? @db.VarChar(1000)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  report SalesReport @relation(fields: [reportId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  revision SalesReportRevision @relation(fields: [reportId, revisionNumber], references: [reportId, number], onDelete: Restrict, onUpdate: Restrict)
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([reportId, createdAt])
+  @@index([actorId])
+  @@map("sales_report_events")
+}
+
+// AI5: A human-attested recipe snapshot for a single approved W7.3 line.
+// Never created automatically from today's Catalog; append-only DB trigger.
+model SalesRecipeEvidence {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  salesLineId String @unique @map("sales_line_id") @db.Uuid
+  recipeId String @map("recipe_id") @db.Uuid
+  recipeVersion Int @map("recipe_version")
+  productVariantId String @map("product_variant_id") @db.Uuid
+  productId String @map("product_id") @db.Uuid
+  size ProductSize
+  ingredientSnapshot Json @map("ingredient_snapshot") @db.JsonB
+  recipeCreatedAt DateTime @map("recipe_created_at") @db.Timestamptz(6)
+  attestedById String @map("attested_by_id") @db.Uuid
+  attestedAt DateTime @default(now()) @map("attested_at") @db.Timestamptz(6)
+  attestationNote String @map("attestation_note") @db.VarChar(500)
+
+  line SalesReportLine @relation(fields: [salesLineId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  attestedBy User @relation(fields: [attestedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([attestedAt])
+  @@index([recipeId])
+  @@map("sales_recipe_evidence")
 }

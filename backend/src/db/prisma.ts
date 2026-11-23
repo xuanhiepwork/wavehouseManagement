@@ -1,17 +1,19 @@
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { PrismaClient } from '../generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { postgresUrl } from '../config/postgres';
 
 export function createPrismaRuntime(env: Record<string, string | undefined> = process.env) {
-    // const adapter = new PrismaPg({
-    //     connectionString: postgresUrl(env), max: 5, connectionTimeoutMillis: 5000,
-    //     idleTimeoutMillis: 10000, statement_timeout: 5000
-    // }, { onPoolError: () => { } });
     const cloud = env.CATALOG_POSTGRES_TARGET === 'aiven';
 
     if (cloud && !env.AIVEN_CA_PATH) {
         throw new Error('Aiven CA certificate path is missing');
+    }
+    let ca: string | undefined;
+    if (cloud) {
+        try { ca = readFileSync(resolve(__dirname, '../..', env.AIVEN_CA_PATH!), 'utf8'); }
+        catch { throw new Error('Aiven CA certificate could not be read'); }
     }
 
     const adapter = new PrismaPg({
@@ -20,9 +22,10 @@ export function createPrismaRuntime(env: Record<string, string | undefined> = pr
         connectionTimeoutMillis: 5000,
         idleTimeoutMillis: 10000,
         statement_timeout: 5000,
+        ...(env.POSTGRES_READ_ONLY === 'true' ? { options: '-c default_transaction_read_only=on' } : {}),
         ...(cloud ? {
             ssl: {
-                ca: readFileSync(env.AIVEN_CA_PATH!, 'utf8'),
+                ca: ca!,
                 rejectUnauthorized: true,
             },
         } : {}),

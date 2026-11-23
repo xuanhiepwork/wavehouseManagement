@@ -1,3 +1,9 @@
+> **Backend PostgreSQL/Prisma ? 21/11/2026:** Runtime kh?ng c?n k?t n?i MongoDB.
+> H??ng d?n hi?n h?nh v? c?c gi?i h?n d? li?u/quy?n Aiven ?
+> [backend/docs/postgresql-runtime-audit.md](backend/docs/postgresql-runtime-audit.md).
+> Ki?m th? localhost: Backend c?ng **5001**, Web c?ng **3000**; gi? ch? ?? Aiven ch? ??c.
+> C?c h??ng d?n MongoDB/migration c? b?n d??i l? l?ch s?, kh?ng ph?i lu?ng kh?i ??ng hi?n h?nh.
+
 # ĐỒ ÁN CHUYÊN NGÀNH
 ## TÊN ĐỒ ÁN: WAVEHOUSE MANAGEMENT SYSTEM
 ### CHỨC NĂNG:
@@ -503,8 +509,63 @@ if ($LASTEXITCODE -ne 0) { throw 'B7 BUILD FAILED' }
 Write-Host 'B7 BUILD SUCCESS'
 ```
 
+
+---
+
+# Đăng nhập vào PostgreSQL trên Aiven Cloud
+
+```
+& "C:\Program Files\PostgreSQL\18\bin\psql.exe" `
+  "host=do-an-he-thong-quan-ly-kho-do-an-2026.b.aivencloud.com port=24631 dbname=wavehouse_dev user=avnadmin sslmode=require" `
+  -W
+```
+
+## Thoát khỏi psql 
+### Tại "wavehouse_dev=>" nhập
+```
+\q
+```
+
+## Chạy backup riêng database trước khi deploy
+```
+$pgDump = "C:\Program Files\PostgreSQL\18\bin\pg_dump.exe"
+
+$backupDir = Join-Path $env:USERPROFILE "Documents\WaveHouseBackups"
+New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+
+$backupFile = Join-Path $backupDir "wavehouse_dev_before_migrations_$(Get-Date -Format 'yyyyMMdd_HHmmss').dump"
+
+try {
+    & $pgDump `
+      --host=do-an-he-thong-quan-ly-kho-do-an-2026.b.aivencloud.com `
+      --port=24631 `
+      --username=avnadmin `
+      --dbname=wavehouse_dev `
+      --format=custom `
+      --no-password `
+      --file="$backupFile"
+} finally {
+    Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+}
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Backup failed. Do not deploy migrations."
+}
+```
+
+---
+
+### TÀI KHOẢN
+TK: xuanhiep.ht4f@gmail.com
+MK: Admin123456
+
 ---
 
 # CÁC BƯỚC KHỞI ĐỘNG DỰ ÁN - CHẠY DEMO
 
+### Trỏ tới các thư mục lần lượt là Backend & Frontend rồi chạy câu lệnh dưới cho cả 2 đường dẫn
+```
+npm run dev
+```
 
+---

@@ -99,6 +99,14 @@ export async function applyInventoryMovement(
         throw new InventoryError('Inventory movement already posted', 409);
     }
 
+    // Serialize every inventory writer with B6/receiving. A revision detects even
+    // offsetting movements whose database transaction timestamps predate submit.
+    // B5 takes all branch locks in UUID order before entering this helper.
+    await tx.branch.update({
+        where: { id: branchId },
+        data: { inventoryRevision: { increment: 1 } },
+    });
+
     // Create an initial zero balance if it does not exist.
     // ON CONFLICT handles concurrent requests for the same balance.
     await tx.$executeRaw`

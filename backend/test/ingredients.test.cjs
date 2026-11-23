@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
 const { Ingredient } = require('../dist/models/Ingredient');
-const { createApp } = require('../dist/app');
+const { createLegacyApp: createApp } = require('./helpers/catalog-app.cjs');
 const { validateBody, validateQuery } = require('../dist/validation/ingredient.validation');
 
 const input = () => ({ code: ' beans ', name: ' Coffee beans ', category: ' Coffee ', unit: 'g', costPrice: 12.5 });

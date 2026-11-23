@@ -1,4 +1,6 @@
 import type { AuthSession } from '../auth';
+import { apiRequest } from '../api';
+import { loadInventoryBalances, loadInventoryBranches } from '../inventory/inventory.api';
 
 export type WorkShift = 'MORNING' | 'AFTERNOON' | 'EVENING';
 export type DayType = 'WEEKDAY' | 'WEEKEND' | 'HOLIDAY';
@@ -50,7 +52,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DECIMAL = /^\d+(?:\.\d{1,6})?$/;
 export function isUuid(value: string): boolean { return UUID.test(value); }
 export function isQuantity(value: string): boolean {
-    return DECIMAL.test(value) && Number.isFinite(Number(value)) && Number(value) < 1e12;
+    if (value.length > 32 || !DECIMAL.test(value)) return false;
+    return value.split('.')[0].replace(/^0+(?=\d)/, '').length <= 12;
 }
 export function quantityScaled(value: string): bigint {
     if (!isQuantity(value)) throw new Error('Số lượng phải không âm, tối đa 6 chữ số thập phân.');
@@ -87,74 +90,29 @@ function list(payload: unknown, keys: string[]): unknown[] {
     throw new Error('API trả danh sách không đúng cấu trúc dự kiến; cần đối chiếu Backend.');
 }
 async function request(session: AuthSession, path: string): Promise<unknown> {
-    const response = await fetch(`/api${path}`, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${session.token}` },
-        cache: 'no-store',
-    });
-    const content = await response.text();
-    let payload: unknown;
-    try { payload = content ? JSON.parse(content) as unknown : null; }
-    catch { throw new Error(`API trả dữ liệu không phải JSON (HTTP ${response.status}).`); }
-    if (!response.ok) {
-        if (response.status === 401) throw new Error('Phiên đăng nhập hết hạn; hãy đăng nhập lại.');
-        if (response.status === 403) throw new Error('Bạn không được phép xem dữ liệu này.');
-        const root = object(payload);
-        throw new Error(text(root?.error ?? root?.message) || `API lỗi HTTP ${response.status}.`);
-    }
-    return payload;
+    return apiRequest<unknown>(session, path);
 }
 function parseBranch(value: unknown): Branch {
     const node = object(value);
     const id = text(node?.id);
-    if (!isUuid(id)) throw new Error('API chi nhánh thiếu ID hợp lệ.');
-    return { id, code: text(node?.code), name: text(node?.name) || id };
+    if (!isUuid(id) || typeof node?.code !== 'string' || !node.code || typeof node.name !== 'string' || !node.name) {
+        throw new Error('API chi nhánh thiếu ID, mã hoặc tên hợp lệ.');
+    }
+    return { id, code: node.code, name: node.name };
 }
 export async function loadBranches(session: AuthSession): Promise<Branch[]> {
-    if (session.user.role !== 'ADMIN') throw new Error('Chỉ ADMIN được tải danh sách chi nhánh toàn hệ thống.');
-    const payload = await request(session, '/branches');
-    const items = list(payload, ['items', 'branches', 'results']);
-    if (items.length > 1000) throw new Error('Danh sách chi nhánh vượt giới hạn hiển thị.');
-    return items.map(parseBranch);
+    if (session.user.role !== 'ADMIN') throw new Error('Chỉ ADMIN được tải danh sách chi nhánh.');
+    return loadInventoryBranches(session);
 }
 export async function loadBalances(session: AuthSession, branchId: string): Promise<BalanceResult> {
-    if (!isUuid(branchId)) throw new Error('Chi nhánh không hợp lệ.');
-    if (session.user.role === 'STAFF') throw new Error('Tài khoản không có quyền xem tổng tồn kho.');
-    if (session.user.role !== 'ADMIN' && session.user.branchId !== branchId) {
-        throw new Error('Chỉ được xem tồn kho chi nhánh của mình.');
+    const items: InventoryBalance[] = [];
+    for (let page = 1; ; page++) {
+        const result = await loadInventoryBalances(session, branchId, page);
+        for (const row of result.items) items.push({ branchId: row.branchId, ingredientId: row.ingredientId,
+            code: row.ingredient.code, name: row.ingredient.name, unit: row.ingredient.unit, quantity: row.quantity });
+        if (page * 50 >= result.total) return { items, paginationWarning: null };
+        if (!result.items.length) throw new Error('Dữ liệu tồn kho thiếu trang. Hãy tải lại.');
     }
-    const payload = await request(session, `/inventory/balances?branchId=${encodeURIComponent(branchId)}`);
-    const raw = list(payload, ['items', 'balances', 'results']);
-    if (raw.length > 5000) throw new Error('Dữ liệu vượt giới hạn, cần API phân trang.');
-    const items = raw.map(value => {
-        const node = object(value);
-        const ingredient = object(node?.ingredient);
-        const ingredientId = text(node?.ingredientId ?? ingredient?.id);
-        const receivedBranchId = text(node?.branchId ?? branchId);
-        const quantity = text(node?.quantity ?? node?.onHand ?? node?.balance);
-        if (!isUuid(ingredientId) || !isUuid(receivedBranchId) || !isQuantity(quantity)) {
-            throw new Error('API tồn kho trả dòng dữ liệu thiếu ID/số lượng. Cần đối chiếu B3.');
-        }
-        return {
-            branchId: receivedBranchId,
-            ingredientId,
-            code: text(node?.ingredientCode ?? ingredient?.code),
-            name: text(node?.ingredientName ?? ingredient?.name) || ingredientId,
-            unit: text(node?.unit ?? ingredient?.unit) || '—',
-            quantity,
-        };
-    }).filter(item => item.branchId === branchId);
-    const root = object(payload);
-    const data = object(root?.data);
-    const meta = object(root?.pagination) ?? object(data?.pagination) ?? object(root?.meta) ?? object(data?.meta);
-    const total = meta?.total ?? meta?.totalItems ?? root?.total ?? data?.total;
-    const totalCount = typeof total === 'number' ? total : typeof total === 'string' && /^\d+$/.test(total) ? Number(total) : null;
-    const paginationWarning = totalCount !== null && totalCount > raw.length
-        ? `API chỉ trả ${raw.length}/${totalCount} bản ghi; bảng này chưa đầy đủ.`
-        : (meta?.hasNextPage === true || meta?.hasMore === true)
-            ? 'API còn trang tiếp theo; dữ liệu tồn kho trên màn hình chưa đầy đủ.'
-            : 'Cần đối chiếu cơ chế phân trang API B3 trước khi coi đây là toàn bộ tồn kho.';
-    return { items, paginationWarning };
 }
 function dateValid(value: string): boolean {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -184,8 +142,15 @@ function parseRecommendation(value: unknown): Recommendation {
     if (!isUuid(raw.destinationBranchId) || !isUuid(raw.ingredientId)) {
         throw new Error('Đề xuất thiếu mã chi nhánh/nguyên liệu.');
     }
+    if (!raw.destinationBranchCode || !raw.destinationBranchName || !raw.ingredientCode || !raw.ingredientName ||
+        !['g', 'ml', 'piece'].includes(raw.unit) || !Number.isSafeInteger(node.historySamples) || Number(node.historySamples) < 0 || !raw.forecastMethod) {
+        throw new Error('Đề xuất thiếu metadata nguyên liệu, đơn vị hoặc thông tin lịch sử.');
+    }
     for (const amount of [raw.onHand, raw.predictedConsumption, raw.requestedQuantity, raw.proposedDeliveryQuantity, raw.unfulfilledQuantity]) {
         if (!isQuantity(amount)) throw new Error('Đề xuất có số lượng không đúng định dạng.');
+    }
+    for (const key of ['onHand', 'predictedConsumption', 'requestedQuantity', 'proposedDeliveryQuantity', 'unfulfilledQuantity']) {
+        if (typeof node[key] !== 'string') throw new Error('API B7 phải trả số lượng bằng chuỗi thập phân.');
     }
     if (quantityScaled(raw.proposedDeliveryQuantity) > quantityScaled(raw.requestedQuantity)) {
         throw new Error('Lượng đề xuất giao lớn hơn lượng yêu cầu.');
@@ -210,7 +175,7 @@ export async function loadForecast(session: AuthSession, input: ForecastInput): 
     const dayType = root.dayType;
     const shift = root.shift;
     const businessDate = text(root.businessDate);
-    if (!dateValid(businessDate) || !['MORNING', 'AFTERNOON', 'EVENING'].includes(text(shift)) ||
+    if (businessDate !== input.businessDate || shift !== input.shift || !dateValid(businessDate) || !['MORNING', 'AFTERNOON', 'EVENING'].includes(text(shift)) ||
         !['WEEKDAY', 'WEEKEND', 'HOLIDAY'].includes(text(dayType))) {
         throw new Error('API B7 trả ngày, ca hoặc loại ngày không hợp lệ.');
     }
@@ -220,6 +185,9 @@ export async function loadForecast(session: AuthSession, input: ForecastInput): 
     if (recommendations.length > 5000) throw new Error('Quá nhiều dòng đề xuất.');
     if (recommendations.some(item => !destinations.includes(item.destinationBranchId))) {
         throw new Error('API trả đề xuất ngoài danh sách chi nhánh nhận.');
+    }
+    if (new Set(recommendations.map(row => `${row.destinationBranchId}:${row.ingredientId}`)).size !== recommendations.length) {
+        throw new Error('API B7 trả trùng dòng nguyên liệu/điểm nhận.');
     }
     return {
         businessDate,
@@ -235,5 +203,7 @@ export async function loadForecast(session: AuthSession, input: ForecastInput): 
 }
 export function displayQuantity(value: string): string {
     if (!isQuantity(value)) return value;
-    return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 6 }).format(Number(value));
+    const [whole, fraction = ''] = value.split('.');
+    const trimmed = fraction.replace(/0+$/, '');
+    return whole.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + (trimmed ? ',' + trimmed : '');
 }

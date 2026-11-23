@@ -1,4 +1,5 @@
 import type { AuthSession } from '../auth';
+import { ApiError, apiRequest, type ApiRequestOptions } from '../api';
 
 export type WorkShift = 'MORNING' | 'AFTERNOON' | 'EVENING';
 export type CountStatus = 'DRAFT' | 'SUBMITTED' | 'RETURNED' | 'APPROVED';
@@ -104,6 +105,7 @@ function parseCount(raw: unknown): ShiftCount {
     const obj = singleObject(raw);
     const id = string(obj.id);
     if (!UUID_PATTERN.test(id)) throw new Error('Phiếu kiểm kê thiếu ID hợp lệ.');
+    if (!UUID_PATTERN.test(string(obj.branchId))) throw new Error('Phiếu kiểm kê thiếu chi nhánh hợp lệ.');
     const items = extractArray(obj, ['items']);
     return {
         id,
@@ -117,35 +119,45 @@ function parseCount(raw: unknown): ShiftCount {
     };
 }
 
-async function request(session: AuthSession, path: string, options: RequestInit = {}): Promise<unknown> {
-    const response = await fetch(`/api${path}`, {
-        ...options,
-        headers: {
-            ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-            Authorization: `Bearer ${session.token}`,
-            ...options.headers,
-        },
-        cache: 'no-store',
-    });
-    const content = await response.text();
-    let payload: unknown = null;
-    if (content) {
-        try { payload = JSON.parse(content) as unknown; }
-        catch { throw new Error(`API trả dữ liệu không phải JSON (HTTP ${response.status}).`); }
+async function request(session: AuthSession, path: string, options: ApiRequestOptions = {}): Promise<unknown> {
+    try {
+        return await apiRequest<unknown>(session, path, options);
+    } catch (cause) {
+        if (cause instanceof ApiError) {
+            const receivingMessages: Record<string, string> = {
+                PENDING_TRANSFER_RECEIPTS: 'Còn phiếu chuyển kho POSTED chưa xác nhận nhận hàng. Hoàn tất nhận hàng đầu ca, kiểm đếm lại rồi gửi/duyệt kiểm kê.',
+                RECEIVING_SNAPSHOT_CHANGED: 'Mốc nhận hàng đã thay đổi hoặc phiếu được gửi trước W7.2. Quản lý cần trả phiếu, nhân viên kiểm đếm và gửi lại.',
+                INVENTORY_SNAPSHOT_CHANGED: 'Tồn kho đã thay đổi hoặc phiếu thiếu mốc tồn W7.2. Quản lý cần trả phiếu, nhân viên kiểm đếm và gửi lại.',
+            };
+            if (receivingMessages[cause.code]) throw new ApiError(receivingMessages[cause.code], cause.status, cause.code, cause.uncertain);
+        }
+        throw cause;
     }
-    if (!response.ok) {
-        const detail = asObject(payload);
-        const reason = string(detail?.error || detail?.message);
-        const message = reason || `Yêu cầu thất bại (HTTP ${response.status}).`;
-        if (response.status === 401) throw new Error(`Phiên đăng nhập đã hết hạn. ${message}`);
-        if (response.status === 409) throw new Error(`Xung đột dữ liệu: ${message}. Hãy tải lại phiếu.`);
-        throw new Error(message);
+}
+
+function assertBranch(session: AuthSession, branchId: string) {
+    if (!UUID_PATTERN.test(branchId)) throw new Error('Mã chi nhánh không hợp lệ.');
+    if (session.user.role !== 'ADMIN' && session.user.branchId !== branchId) throw new Error('Chỉ được kiểm kê chi nhánh được phân công.');
+}
+
+async function allPages(session: AuthSession, path: string): Promise<unknown[]> {
+    const result: unknown[] = [];
+    for (let page = 1; ; page++) {
+        const response = asObject(await request(session, `${path}${path.includes('?') ? '&' : '?'}page=${page}`));
+        if (!response || !Array.isArray(response.items) || response.page !== page || typeof response.total !== 'number'
+            || !Number.isSafeInteger(response.total) || response.total < 0 || response.items.length > 50) {
+            throw new Error('Phản hồi phân trang không hợp lệ. Vui lòng tải lại.');
+        }
+        result.push(...response.items);
+        if (page * 50 >= response.total) return result;
+        if (!response.items.length) throw new Error('Danh sách bị thiếu trang. Vui lòng tải lại.');
     }
-    return payload;
 }
 
 export async function loadTemplate(session: AuthSession, branchId: string): Promise<IngredientLine[]> {
+    assertBranch(session, branchId);
     const response = await request(session, `/shift-stock-counts/template?branchId=${encodeURIComponent(branchId)}`);
+    if (asObject(response)?.branchId !== branchId) throw new Error('Template trả về ngoài chi nhánh đã chọn.');
     const entries = extractArray(response, ['items', 'ingredients']);
     if (!entries) throw new Error('Template không chứa items/ingredients. Cần đối chiếu cấu trúc API B6.');
     if (!entries.length) throw new Error('Chi nhánh hiện không có nguyên liệu để kiểm kê.');
@@ -156,25 +168,38 @@ export async function loadTemplate(session: AuthSession, branchId: string): Prom
 }
 
 export async function loadBranchList(session: AuthSession): Promise<BranchItem[]> {
-    const response = await request(session, '/branches');
-    const rows = extractArray(response, ['items', 'branches']);
-    if (!rows) throw new Error('Không đọc được danh sách chi nhánh.');
-    return rows.map(value => {
+    if (session.user.role !== 'ADMIN') throw new Error('Chỉ quản trị viên được xem danh sách mọi chi nhánh.');
+    const rows = await allPages(session, '/branches');
+    const parsed = rows.map(value => {
         const obj = asObject(value);
-        return { id: string(obj?.id), code: string(obj?.code), name: string(obj?.name) };
-    }).filter(item => UUID_PATTERN.test(item.id));
+        const item = { id: string(obj?.id), code: string(obj?.code), name: string(obj?.name) };
+        if (!UUID_PATTERN.test(item.id) || !item.code || !item.name) throw new Error('Danh sách chi nhánh không hợp lệ.');
+        return item;
+    });
+    if (new Set(parsed.map(item => item.id)).size !== parsed.length) throw new Error('Danh sách chi nhánh thay đổi trong lúc tải. Vui lòng tải lại.');
+    return parsed;
 }
 
-export async function listCounts(session: AuthSession, branchId: string): Promise<ShiftCount[]> {
-    const response = await request(session, `/shift-stock-counts?branchId=${encodeURIComponent(branchId)}`);
-    const rows = extractArray(response, ['items', 'counts', 'results']);
-    if (!rows) throw new Error('API danh sách kiểm kê chưa trả mảng items/counts.');
-    return rows.map(parseCount);
+export async function listCounts(session: AuthSession, branchId: string, filters?: { businessDate: string; shift: WorkShift }): Promise<ShiftCount[]> {
+    assertBranch(session, branchId);
+    const query = new URLSearchParams({ branchId, ...(filters ?? {}) });
+    const counts = (await allPages(session, `/shift-stock-counts?${query.toString()}`)).map(parseCount);
+    if (counts.some(count => count.branchId !== branchId || (filters && (count.businessDate !== filters.businessDate || count.shift !== filters.shift)))) {
+        throw new Error('Danh sách kiểm kê nằm ngoài chi nhánh/ngày/ca đã chọn.');
+    }
+    if (new Set(counts.map(count => count.id)).size !== counts.length || (filters && counts.length > 1)) {
+        throw new Error('Danh sách kiểm kê trùng hoặc đã thay đổi. Vui lòng tải lại trước khi xử lý.');
+    }
+    return counts;
 }
 
 export async function getCount(session: AuthSession, countId: string): Promise<ShiftCount> {
+    if (!UUID_PATTERN.test(countId)) throw new Error('Mã phiếu không hợp lệ.');
     const result = await request(session, `/shift-stock-counts/${countId}`);
-    return parseCount(result);
+    const count = parseCount(result);
+    if (count.id !== countId) throw new Error('Máy chủ trả về phiếu khác yêu cầu.');
+    assertBranch(session, count.branchId);
+    return count;
 }
 
 export type SaveCountInput = {
@@ -186,19 +211,21 @@ export type SaveCountInput = {
 };
 
 export async function createCount(session: AuthSession, payload: SaveCountInput): Promise<string> {
+    assertBranch(session, payload.branchId);
     const response = await request(session, '/shift-stock-counts', {
         method: 'POST',
-        body: JSON.stringify(payload),
+        body: payload,
     });
-    const id = string(singleObject(response).id);
-    if (!UUID_PATTERN.test(id)) throw new Error('Backend đã phản hồi nhưng thiếu ID của phiếu kiểm kê. Kiểm tra danh sách trước khi lưu lại.');
+    const root = asObject(response);
+    const id = string((asObject(root?.data) ?? root)?.id);
+    if (!UUID_PATTERN.test(id)) throw new ApiError('Backend đã phản hồi nhưng thiếu ID của phiếu kiểm kê. Đối chiếu danh sách trước khi lưu lại.', 200, 'INVALID_RESPONSE', true);
     return id;
 }
 
 export async function updateCount(session: AuthSession, countId: string, payload: Pick<SaveCountInput, 'note' | 'items'>): Promise<void> {
     await request(session, `/shift-stock-counts/${countId}`, {
         method: 'PATCH',
-        body: JSON.stringify(payload),
+        body: payload,
     });
 }
 
@@ -213,6 +240,6 @@ export async function approveCount(session: AuthSession, countId: string): Promi
 export async function returnCount(session: AuthSession, countId: string, returnReason: string): Promise<void> {
     await request(session, `/shift-stock-counts/${countId}/return`, {
         method: 'POST',
-        body: JSON.stringify({ reason: returnReason }),
+        body: { reason: returnReason },
     });
 }

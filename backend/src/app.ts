@@ -3,19 +3,16 @@ import { createAuthRouter } from './routes/auth.routes';
 import express from 'express';
 import http from 'node:http';
 import { Server } from 'socket.io';
-import mongoose from 'mongoose';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
-import { ingredientRouter, postgresIngredientRouter } from './routes/ingredient.routes';
+import { postgresIngredientRouter, postgresProductRouter, postgresRecipeRouter } from './routes/catalog.postgres.routes';
 import { errorHandler } from './middleware/errorHandler';
-import { ingredientPaths, ingredientSchemas, postgresIngredientDocumentation } from './config/ingredient.openapi';
-import { ingredientStore, productStore, recipeStore } from './config/postgres';
+import { postgresIngredientDocumentation } from './config/ingredient.openapi';
+import { catalogUsesPostgres } from './config/postgres';
 import type { createPostgresIngredientService } from './services/ingredient.postgres.service';
-import { productRouter, postgresProductRouter } from './routes/product.routes';
-import { productPaths, productSchemas, postgresProductDocumentation } from './config/product.openapi';
+import { postgresProductDocumentation } from './config/product.openapi';
 import type { createPostgresProductService } from './services/product.postgres.service';
-import { recipeRouter, postgresRecipeRouter } from './routes/recipe.routes';
-import { recipePaths, recipeSchemas, postgresRecipeDocumentation } from './config/recipe.openapi';
+import { postgresRecipeDocumentation } from './config/recipe.openapi';
 import type { createPostgresRecipeService } from './services/recipe.postgres.service';
 import { createAuthGuards } from './middleware/auth.middleware';
 import { createBranchRouter } from './routes/branch.routes';
@@ -25,16 +22,16 @@ import { createGoodsReceiptRouter } from './routes/goods-receipt.routes';
 import { createStockDocumentRouter } from './routes/stock-document.routes';
 import { createShiftStockCountRouter } from './routes/shift-stock-count.routes';
 import { createRestockRecommendationRouter } from './routes/restock-recommendation.routes';
+import { createTransferReceiptRouter } from './routes/transfer-receipt.routes';
+import { createSalesReportRouter } from './routes/sales-report.routes';
+import { createDashboardRouter } from './routes/dashboard.routes';
 
 // Explicit paths keep documentation working after TypeScript sources are compiled.
 const apiDocs = {
     openapi: '3.0.0',
     info: { title: 'WaveHouse Management API Docs', version: '1.0.0' },
-    components: { schemas: { ...ingredientSchemas, ...productSchemas, ...recipeSchemas } },
+    components: { schemas: {} },
     paths: {
-        ...ingredientPaths,
-        ...productPaths,
-        ...recipePaths,
         '/': { get: { summary: 'Server status', responses: { '200': { description: 'Server is running' } } } },
         '/health': {
             get: {
@@ -47,22 +44,21 @@ const apiDocs = {
     },
 };
 
-export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = () => mongoose.connection.readyState === 1,
+export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = () => false,
     options: {
         postgresIngredients?: ReturnType<typeof createPostgresIngredientService>;
         postgresProducts?: ReturnType<typeof createPostgresProductService>;
         postgresRecipes?: ReturnType<typeof createPostgresRecipeService>;
         authPrisma?: PrismaClient;
     } = {}) {
-    const mode = ingredientStore();
-    const products = productStore();
-    const recipes = recipeStore();
-    if ((mode === 'postgres') !== !!options.postgresIngredients) throw new Error('Ingredient implementation selection is incomplete');
-    if ((products === 'postgres') !== !!options.postgresProducts) throw new Error('Product implementation selection is incomplete');
-    if ((recipes === 'postgres') !== !!options.postgresRecipes) throw new Error('Recipe implementation selection is incomplete');
-    const ingredientDocs = mode === 'postgres' ? postgresIngredientDocumentation() : { schemas: {}, paths: {} };
-    const productDocs = products === 'postgres' ? postgresProductDocumentation() : { schemas: {}, paths: {} };
-    const recipeDocs = recipes === 'postgres' ? postgresRecipeDocumentation() : { schemas: {}, paths: {} };
+    catalogUsesPostgres();
+    if (!options.authPrisma) throw new Error('Prisma authentication dependency is required');
+    if (!options.postgresIngredients) throw new Error('Ingredient implementation selection is incomplete');
+    if (!options.postgresProducts) throw new Error('Product implementation selection is incomplete');
+    if (!options.postgresRecipes) throw new Error('Recipe implementation selection is incomplete');
+    const ingredientDocs = postgresIngredientDocumentation();
+    const productDocs = postgresProductDocumentation();
+    const recipeDocs = postgresRecipeDocumentation();
     const docs = {
         ...apiDocs,
         components: { schemas: { ...apiDocs.components.schemas, ...ingredientDocs.schemas, ...productDocs.schemas, ...recipeDocs.schemas } },
@@ -141,6 +137,10 @@ export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = ()
             createStockDocumentRouter(options.authPrisma, 'TRANSFER')
         );
 
+        app.use('/api/transfer-receipts', guards.requireAuth, createTransferReceiptRouter(options.authPrisma));
+        app.use('/api/sales-reports', guards.requireAuth, createSalesReportRouter(options.authPrisma));
+        app.use('/api/dashboard', guards.requireAuth, createDashboardRouter(options.authPrisma));
+
         app.use(
             '/api/shift-stock-counts',
             guards.requireAuth,
@@ -166,11 +166,11 @@ export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = ()
             );
         }
     }
-    app.use('/api/ingredients', options.postgresIngredients ? postgresIngredientRouter(options.postgresIngredients) : ingredientRouter);
-    app.use('/api/products', options.postgresProducts ? postgresProductRouter(options.postgresProducts) : productRouter);
-    app.use('/api/recipes', options.postgresRecipes ? postgresRecipeRouter(options.postgresRecipes) : recipeRouter);
+    app.use('/api/ingredients', postgresIngredientRouter(options.postgresIngredients!));
+    app.use('/api/products', postgresProductRouter(options.postgresProducts!));
+    app.use('/api/recipes', postgresRecipeRouter(options.postgresRecipes!));
     io.on('connection', socket => {
-        // Notification relay only; inventory persistence is not implemented yet.
+        // Existing notification relay; persistence remains in authenticated inventory APIs.
         socket.on('update_inventory', (data: unknown) => { io.emit('inventory_changed', data); });
     });
     app.use((_req, res) => { res.status(404).json({ error: 'Not found' }); });

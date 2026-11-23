@@ -1,288 +1,375 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AuthSession } from '../auth';
 import {
-    deltaQuantity,
-    getReceivingBranches,
-    getTransferDetails,
-    lessOrEqual,
-    listPostedTransfers,
-    validQuantity,
-    type BranchOption,
-    type TransferDetails,
-    type TransferSummary,
+    calculateReceiving, confirmReceipt, createReceipt, getReceivingBranches, getTransferReceiving,
+    isBranchId, listPostedTransfers, ReceivingApiError, updateReceipt, validQuantity,
+    type BranchOption, type ReceivingDetails, type ReceivingFilter, type ReceivingInput,
+    type ReceivingPageResult,
 } from './receiving.api';
 import './ReceivingPage.css';
 
-type ReceivedLine = { received: string; damaged: string; note: string };
-const STATUS = 'POSTED';
-
-function formatQuantity(value: string): string {
-    const n = Number(value);
-    return Number.isFinite(n)
-        ? new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 6 }).format(n)
-        : value;
+type Entry = { received: string; damaged: string; note: string };
+type Props = {
+    session: AuthSession;
+    onUnsavedChange?: (value: boolean) => void;
+    onWorkingChange?: (value: boolean) => void;
+    initialTransferId?: string | null;
+    initialRequest?: number;
+};
+const statusName = { AWAITING_RECEIVING: 'Chưa xác nhận nhận hàng', DRAFT: 'Biên bản nháp', CONFIRMED: 'Đã xác nhận nhận hàng' };
+function message(error: unknown): string { return error instanceof Error ? error.message : 'Không thể hoàn tất yêu cầu.'; }
+function showQuantity(value: string): string {
+    // Group only the integer part; keep all six decimal places exact.
+    const [whole = '0', fraction = ''] = value.split('.');
+    const trimmed = fraction.replace(/0+$/, '');
+    return whole.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + (trimmed ? ',' + trimmed : '');
 }
-function formatDate(value: string | null): string {
-    if (!value) return 'Không có thời điểm';
+function showDate(value: string | null): string {
+    if (!value) return 'Chưa có';
+    return new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
+}
+
+function localDateTime(value: string | null | undefined): string {
+    if (!value) return '';
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('vi-VN', {
-        timeZone: 'Asia/Ho_Chi_Minh', dateStyle: 'short', timeStyle: 'short',
-    }).format(date);
-}
-function message(error: unknown): string {
-    return error instanceof Error ? error.message : 'Có lỗi không xác định. Vui lòng thử tải lại.';
-}
-function transferFilename(id: string): string {
-    return `wavehouse-doi-chieu-nhan-hang-${id.slice(0, 8)}.json`;
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 19);
 }
 
-export default function ReceivingPage({ session }: { session: AuthSession }) {
+export default function ReceivingPage({ session, onUnsavedChange, onWorkingChange, initialTransferId, initialRequest = 0 }: Props) {
     const isAdmin = session.user.role === 'ADMIN';
     const [branchId, setBranchId] = useState(session.user.branchId ?? '');
     const [branches, setBranches] = useState<BranchOption[]>([]);
-    const [transfers, setTransfers] = useState<TransferSummary[]>([]);
+    const [page, setPage] = useState(1);
+    const [filter, setFilter] = useState<ReceivingFilter>('ALL');
+    const [listing, setListing] = useState<ReceivingPageResult | null>(null);
     const [selectedId, setSelectedId] = useState('');
-    const [transfer, setTransfer] = useState<TransferDetails | null>(null);
-    const [entries, setEntries] = useState<Record<string, ReceivedLine>>({});
-    const [overallNote, setOverallNote] = useState('');
-    const [busy, setBusy] = useState(false);
-    const [loadingDetail, setLoadingDetail] = useState(false);
+    const [details, setDetails] = useState<ReceivingDetails | null>(null);
+    const [entries, setEntries] = useState<Record<string, Entry>>({});
+    const [note, setNote] = useState('');
+    const [physicalReceivedAt, setPhysicalReceivedAt] = useState('');
+    const [legacyEvidence, setLegacyEvidence] = useState('');
+    const [dirty, setDirty] = useState(false);
+    const [working, setWorking] = useState(false);
+    const [listLoading, setListLoading] = useState(false);
+    const [detailLoading, setDetailLoading] = useState(false);
+    const [branchLoading, setBranchLoading] = useState(isAdmin);
+    const [listError, setListError] = useState('');
+    const [branchError, setBranchError] = useState('');
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
-    const [version, setVersion] = useState(0);
+    const [requiresReload, setRequiresReload] = useState(false);
+    const [listRevision, setListRevision] = useState(0);
+    const [detailRevision, setDetailRevision] = useState(0);
+    const writeInFlight = useRef(false);
+    const openedFromLink = useRef<string | null>(null);
+    const editorSnapshot = JSON.stringify({ branchId, selectedId, entries, note, physicalReceivedAt, legacyEvidence });
+    const editorSnapshotRef = useRef(editorSnapshot); editorSnapshotRef.current = editorSnapshot;
+    const pendingReconciliation = requiresReload && Boolean(details) && Boolean(error);
+
+    useEffect(() => {
+        const requestKey = `${initialTransferId}:${initialRequest}`;
+        if (!initialTransferId || requestKey === openedFromLink.current || writeInFlight.current) return;
+        if (dirty && !window.confirm('Có biên bản chưa lưu. Bỏ thay đổi để mở phiếu chuyển kho được chọn?')) return;
+        const expectedEditor = editorSnapshotRef.current;
+        let active = true;
+        void getTransferReceiving(session, initialTransferId).then(data => {
+            if (!active) return;
+            if (editorSnapshotRef.current !== expectedEditor) {
+                setError('Biểu mẫu đã thay đổi trong lúc tải liên kết. Dữ liệu đang nhập được giữ; hãy mở lại phiếu từ danh sách khi sẵn sàng.');
+                return;
+            }
+            openedFromLink.current = requestKey;
+            if (session.user.role !== 'ADMIN' && data.transfer.destinationBranchId !== session.user.branchId) throw new Error('Phiếu không thuộc chi nhánh nhận của tài khoản.');
+            setBranchId(data.transfer.destinationBranchId); setSelectedId(initialTransferId); setDetailRevision(value => value + 1);
+        }).catch(cause => { if (active) setError(message(cause)); });
+        return () => { active = false; };
+        // Opening a link is explicit; token-only refresh does not discard this editor.
+    }, [initialTransferId, initialRequest, session.user.id]);
+
+    useEffect(() => { onUnsavedChange?.(dirty || pendingReconciliation); }, [dirty, pendingReconciliation, onUnsavedChange]);
+    useEffect(() => { onWorkingChange?.(working); }, [working, onWorkingChange]);
+    useEffect(() => () => { onUnsavedChange?.(false); onWorkingChange?.(false); }, [onUnsavedChange, onWorkingChange]);
+    useEffect(() => {
+        const beforeUnload = (event: BeforeUnloadEvent) => {
+            if (dirty || working || pendingReconciliation) { event.preventDefault(); event.returnValue = ''; }
+        };
+        window.addEventListener('beforeunload', beforeUnload);
+        return () => window.removeEventListener('beforeunload', beforeUnload);
+    }, [dirty, working, pendingReconciliation]);
 
     useEffect(() => {
         if (!isAdmin) return;
         let active = true;
-        void getReceivingBranches(session).then(list => {
+        setBranchLoading(true);
+        void getReceivingBranches(session).then(items => {
             if (!active) return;
-            setBranches(list);
-            setBranchId(previous => previous || list[0]?.id || '');
-        }).catch(cause => {
-            if (active) setError(message(cause));
-        });
+            setBranches(items); setBranchError('');
+            // An explicit incoming-transfer link determines its destination; do not race it with a default branch.
+            setBranchId(current => current || (initialTransferId ? '' : items[0]?.id || ''));
+        }).catch(cause => { if (active) setBranchError(message(cause)); })
+            .finally(() => { if (active) setBranchLoading(false); });
         return () => { active = false; };
     }, [session, isAdmin]);
 
     useEffect(() => {
-        setTransfers([]);
-        setSelectedId('');
-        setTransfer(null);
-        setEntries({});
-        setOverallNote('');
-        if (!branchId) return;
         let active = true;
-        setBusy(true);
-        setError('');
-        setNotice('');
-        void listPostedTransfers(session, branchId).then(result => {
-            if (active) setTransfers(result);
-        }).catch(cause => {
-            if (active) setError(message(cause));
-        }).finally(() => {
-            if (active) setBusy(false);
-        });
+        setListing(null); setListError('');
+        if (!isBranchId(branchId)) { setListLoading(false); return; }
+        setListLoading(true);
+        void listPostedTransfers(session, branchId, page, filter).then(result => {
+            if (active) setListing(result);
+        }).catch(cause => { if (active) setListError(message(cause)); })
+            .finally(() => { if (active) setListLoading(false); });
         return () => { active = false; };
-    }, [session, branchId, version]);
+    }, [session, branchId, page, filter, listRevision]);
 
     useEffect(() => {
-        setTransfer(null);
-        setEntries({});
-        setOverallNote('');
-        if (!selectedId) return;
         let active = true;
-        setError('');
-        setNotice('');
-        setLoadingDetail(true);
-        void getTransferDetails(session, selectedId).then(detail => {
+        setDetails(null); setEntries({}); setNote(''); setPhysicalReceivedAt(''); setLegacyEvidence(''); setDirty(false); setNotice(''); setError('');
+        if (!selectedId) { setDetailLoading(false); setRequiresReload(false); return; }
+        setDetailLoading(true); setRequiresReload(true);
+        void getTransferReceiving(session, selectedId).then(data => {
             if (!active) return;
-            if (detail.status !== STATUS || detail.destinationBranchId !== branchId) {
-                setError('Phiếu không thuộc chi nhánh nhận hoặc chưa ở trạng thái POSTED.');
-                return;
-            }
-            setTransfer(detail);
-            setEntries(Object.fromEntries(detail.items.map(item => [item.ingredientId, {
-                received: '', damaged: '0', note: '',
-            }])));
-        }).catch(cause => {
-            if (active) setError(message(cause));
-        }).finally(() => {
-            if (active) setLoadingDetail(false);
-        });
+            if (data.transfer.id !== selectedId || data.transfer.destinationBranchId !== branchId) throw new Error('Phiếu không thuộc chi nhánh nhận đã chọn.');
+            setDetails(data);
+            setEntries(Object.fromEntries((data.receipt?.items ?? data.transfer.items).map(item => {
+                const saved = data.receipt?.items.find(line => line.ingredientId === item.ingredientId);
+                return [item.ingredientId, { received: saved?.receivedQuantity ?? '', damaged: saved?.damagedQuantity ?? '0', note: saved?.discrepancyReason ?? '' }];
+            })));
+            setNote(data.receipt?.note ?? ''); setRequiresReload(false);
+            setPhysicalReceivedAt(localDateTime(data.receipt?.physicalReceivedAt)); setLegacyEvidence(data.receipt?.legacyEvidence ?? '');
+        }).catch(cause => { if (active) setError(message(cause)); })
+            .finally(() => { if (active) setDetailLoading(false); });
         return () => { active = false; };
-    }, [session, selectedId, branchId]);
+    // Reauthenticating the same account must not replace an unsaved receiving editor.
+    }, [session.user.id, selectedId, branchId, detailRevision]);
 
-    const review = useMemo(() => {
-        if (!transfer) return { counted: 0, total: 0, issues: 0, complete: false };
-        let counted = 0;
-        let issues = 0;
-        let complete = true;
-        for (const item of transfer.items) {
-            const entry = entries[item.ingredientId];
-            const good = entry && validQuantity(entry.received, item.unit)
-                && validQuantity(entry.damaged, item.unit)
-                && lessOrEqual(entry.damaged, entry.received);
-            if (!good) { complete = false; continue; }
-            counted++;
-            const delta = deltaQuantity(entry.received, item.plannedQuantity);
-            const issue = delta !== '0' || Number(entry.damaged) > 0;
-            if (issue) {
-                issues++;
-                if (entry.note.trim().length < 3) complete = false;
-            }
+    const rows = useMemo(() => (details?.receipt?.items ?? details?.transfer.items ?? []).map(item => {
+        const entry = entries[item.ingredientId] ?? { received: '', damaged: '0', note: '' };
+        let problem = '';
+        let calculations: ReturnType<typeof calculateReceiving> | null = null;
+        if (!validQuantity(entry.received, item.unit) || !validQuantity(entry.damaged, item.unit)) {
+            problem = 'Nhập số không âm, tối đa 6 số lẻ; piece phải nguyên.';
+        } else {
+            try {
+                calculations = calculateReceiving(entry.received, entry.damaged, item.plannedQuantity);
+                if (calculations.hasDiscrepancy && !entry.note.trim()) problem = 'Cần giải thích thiếu, thừa hoặc hỏng.';
+            } catch (cause) { problem = message(cause); }
         }
-        return { counted, total: transfer.items.length, issues, complete: complete && counted > 0 };
-    }, [transfer, entries]);
+        return { ...item, entry, calculations, problem };
+    }), [details, entries]);
+    const legacyComplete = !details?.transfer.legacyReceivingRequired || (Boolean(legacyEvidence.trim())
+        && Number.isFinite(Date.parse(physicalReceivedAt)) && Date.parse(physicalReceivedAt) <= Date.now());
+    const complete = rows.length > 0 && rows.every(row => !row.problem) && legacyComplete;
+    const readOnly = details?.receipt?.status === 'CONFIRMED' || requiresReload || working || detailLoading ||
+        details?.transfer.id !== selectedId || details?.transfer.destinationBranchId !== branchId ||
+        !(details?.allowedActions.canCreate || details?.allowedActions.canEdit);
+    const canSave = complete && !readOnly && Boolean(details?.allowedActions.canCreate || details?.allowedActions.canEdit);
+    const canConfirm = complete && !dirty && !readOnly && Boolean(details?.receipt && details.allowedActions.canConfirm);
+    const issueCount = rows.filter(row => row.calculations?.hasDiscrepancy).length;
 
-    function update(id: string, field: keyof ReceivedLine, value: string) {
-        setEntries(current => ({
-            ...current, [id]: {
-                received: current[id]?.received ?? '',
-                damaged: current[id]?.damaged ?? '0',
-                note: current[id]?.note ?? '',
-                [field]: value,
+    function discardAllowed(): boolean {
+        return !writeInFlight.current && (!dirty || window.confirm('Có thay đổi chưa lưu. Bỏ thay đổi để mở dữ liệu khác?'));
+    }
+    function changeScope(action: () => void) {
+        if (!discardAllowed()) return;
+        setSelectedId(''); setDetails(null); setDirty(false); onUnsavedChange?.(false); action();
+    }
+    function edit(ingredientId: string, field: keyof Entry, value: string) {
+        if (readOnly) return;
+        setEntries(current => ({ ...current, [ingredientId]: {
+            received: current[ingredientId]?.received ?? '', damaged: current[ingredientId]?.damaged ?? '0',
+            note: current[ingredientId]?.note ?? '', [field]: value,
+        } }));
+        setDirty(true); onUnsavedChange?.(true); setNotice('');
+    }
+    function acceptSaved(data: ReceivingDetails) {
+        if (data.transfer.id !== selectedId || data.transfer.destinationBranchId !== branchId) {
+            throw new ReceivingApiError('Phản hồi không khớp phiếu nhận. Tải lại biên bản.', 0, 'INVALID_RESPONSE', true);
+        }
+        setDetails(data);
+        setEntries(Object.fromEntries((data.receipt?.items ?? []).map(item => [item.ingredientId, {
+            received: item.receivedQuantity, damaged: item.damagedQuantity, note: item.discrepancyReason ?? '',
+        }])));
+        setNote(data.receipt?.note ?? ''); setDirty(false); onUnsavedChange?.(false); setRequiresReload(false); setListRevision(value => value + 1);
+        setPhysicalReceivedAt(localDateTime(data.receipt?.physicalReceivedAt)); setLegacyEvidence(data.receipt?.legacyEvidence ?? '');
+    }
+    async function persist(confirm: boolean) {
+        if (!details || writeInFlight.current || (confirm ? !canConfirm : !canSave)) return;
+        if (confirm && !window.confirm('Xác nhận số thực nhận và số hỏng đã lưu? Biên bản sẽ khóa chỉnh sửa. Thao tác này không thay đổi tồn kho.')) return;
+        writeInFlight.current = true; setWorking(true); onWorkingChange?.(true); setError(''); setNotice('');
+        try {
+            let result: ReceivingDetails;
+            if (confirm && details.receipt) {
+                result = await confirmReceipt(session, details.receipt.id, details.receipt.version);
+            } else {
+                const input: ReceivingInput = { note: note.trim(), ...(details.transfer.legacyReceivingRequired ? {
+                    physicalReceivedAt: new Date(physicalReceivedAt).toISOString(), legacyEvidence: legacyEvidence.trim(),
+                } : {}), items: rows.map(row => ({
+                    ingredientId: row.ingredientId, receivedQuantity: row.entry.received,
+                    damagedQuantity: row.entry.damaged, discrepancyReason: row.entry.note.trim() || null,
+                })) };
+                result = details.receipt
+                    ? await updateReceipt(session, details.receipt.id, details.receipt.version, input)
+                    : await createReceipt(session, details.transfer.id, input);
             }
-        }));
-        setNotice('');
+            acceptSaved(result);
+            setNotice(confirm ? 'Đã xác nhận nhận hàng. Tồn kho không thay đổi.' : 'Đã lưu biên bản nháp lên máy chủ.');
+        } catch (cause) {
+            setError(message(cause));
+            if (!(cause instanceof ReceivingApiError) || cause.outcomeUnknown || [401, 403, 404, 409].includes(cause.status)) setRequiresReload(true);
+        } finally { writeInFlight.current = false; setWorking(false); onWorkingChange?.(false); }
     }
-
+    function reloadDetails() {
+        if (!discardAllowed()) return;
+        setDetails(null); setRequiresReload(true); setDirty(false); onUnsavedChange?.(false);
+        setDetailRevision(value => value + 1); setListRevision(value => value + 1);
+    }
     function exportReport() {
-        if (!transfer || !review.complete) return;
+        if (!details) return;
         const report = {
-            reportType: 'WAVEHOUSE_RECEIVING_RECONCILIATION_DRAFT',
-            schemaVersion: 1,
-            source: 'website-W3-local-export',
-            persistedToBackend: false,
-            adjustsInventory: false,
-            transferId: transfer.id,
-            transferNumber: transfer.number,
-            sourceBranchId: transfer.sourceBranchId,
-            destinationBranchId: transfer.destinationBranchId,
-            recordedAt: new Date().toISOString(),
-            receiverUserId: session.user.id,
-            receiverRole: session.user.role,
-            note: overallNote.trim(),
-            lines: transfer.items.map(item => {
-                const received = entries[item.ingredientId];
-                return {
-                    ingredientId: item.ingredientId,
-                    ingredientCode: item.code,
-                    ingredientName: item.name,
-                    unit: item.unit,
-                    expectedQuantity: item.plannedQuantity,
-                    receivedQuantity: received.received,
-                    damagedQuantity: received.damaged,
-                    variance: deltaQuantity(received.received, item.plannedQuantity),
-                    discrepancyNote: received.note.trim(),
-                };
-            }),
+            reportType: 'WAVEHOUSE_TRANSFER_RECEIVING_BACKUP', schemaVersion: 2,
+            exportedAt: new Date().toISOString(), adjustsInventory: false,
+            persistedToBackend: Boolean(details.receipt) && !dirty && !requiresReload,
+            serverDocument: details,
+            localDraft: { note, physicalReceivedAt, legacyEvidence, items: rows.map(row => ({ ingredientId: row.ingredientId,
+                receivedQuantity: row.entry.received, damagedQuantity: row.entry.damaged,
+                discrepancyReason: row.entry.note, calculations: row.calculations })) },
         };
-        const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = transferFilename(transfer.id);
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(url);
-        setNotice('Đã xuất biên bản ra tệp trên máy. Chưa có dữ liệu nào được lưu lên Backend.');
+        const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json;charset=utf-8' }));
+        const link = document.createElement('a'); link.href = url;
+        link.download = 'wavehouse-nhan-hang-' + details.transfer.code + '.json'; link.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setNotice('Đã xuất bản sao JSON. Việc xuất file không lưu hay xác nhận thay cho thao tác trên máy chủ.');
     }
 
-    return (
-        <section className="w3-page">
-            <div className="w3-heading">
-                <div><p className="w3-eyebrow">WAVEHOUSE / ĐẦU CA</p><h2>Đối chiếu nhận nguyên liệu</h2>
-                    <p>So sánh số lượng kho đã chuyển với số lượng nhân viên quầy kiểm đếm khi nhận hàng.</p></div>
-                <span className="w3-label">GIAO DIỆN W3</span>
+    return <section className="w3-page">
+        <div className="w3-heading">
+            <div><p className="w3-eyebrow">WAVEHOUSE / ĐẦU CA</p><h2>Nhận nguyên liệu chuyển kho</h2>
+                <p>Kiểm đếm, lưu nháp và xác nhận hàng nhận tại chi nhánh.</p></div>
+            <span className="w3-label">GIAO NHẬN</span>
+        </div>
+        <div className="w3-alert w3-warning" role="note">
+            Tồn kho đã được ghi khi phiếu chuyển kho POSTED. Ký nhận chỉ lưu số thực nhận; thiếu và hỏng sẽ được đối soát bằng kiểm kê B6.
+            Phiếu POSTED chưa có biên bản không có nghĩa là đã nhận hàng.
+        </div>
+        <div className="w3-panel w3-controls">
+            <div className="w3-field"><label htmlFor="w3-branch">Chi nhánh nhận hàng</label>
+                {isAdmin && branches.length ? <select id="w3-branch" value={branchId} disabled={working || branchLoading}
+                    onChange={event => changeScope(() => { setBranchId(event.target.value); setPage(1); })}>
+                    {branches.map(item => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
+                </select> : <input id="w3-branch" value={branchId} readOnly={!isAdmin} disabled={working || branchLoading}
+                    placeholder="UUID chi nhánh nhận" onChange={event => changeScope(() => { setBranchId(event.target.value); setPage(1); })} />}
             </div>
-            <div className="w3-alert w3-warning" role="note">
-                <strong>Chưa xác nhận thực nhận trên máy chủ.</strong> B5 có thể đã cập nhật tồn ngay khi phiếu chuyển kho được duyệt.
-                Màn hình W3 chỉ <strong>đọc phiếu POSTED và xuất biên bản đối chiếu cục bộ</strong>; không ghi nhận hàng, không điều chỉnh số dư.
-                Cần bổ sung API xác nhận giao nhận riêng trước khi đưa vào vận hành chính thức.
+            <div className="w3-field"><label htmlFor="w3-status">Danh sách</label>
+                <select id="w3-status" value={filter} disabled={working}
+                    onChange={event => changeScope(() => { setFilter(event.target.value as ReceivingFilter); setPage(1); })}>
+                    <option value="ALL">Tất cả phiếu chuyển kho POSTED</option><option value="DRAFT">Biên bản nháp</option>
+                    <option value="CONFIRMED">Biên bản đã xác nhận</option>
+                </select>
             </div>
-            <div className="w3-panel w3-controls">
-                <div className="w3-field">
-                    <label htmlFor="w3-branch">Chi nhánh nhận hàng</label>
-                    {isAdmin && branches.length > 0 ? (
-                        <select id="w3-branch" value={branchId} disabled={busy || loadingDetail} onChange={event => setBranchId(event.target.value)}>
-                            {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.code} — {branch.name}</option>)}
-                        </select>
-                    ) : isAdmin ? (
-                        <input id="w3-branch" value={branchId} placeholder="UUID chi nhánh" disabled={busy || loadingDetail} onChange={event => setBranchId(event.target.value)} />
-                    ) : (
-                        <input id="w3-branch" value={branchId} readOnly aria-label="Chi nhánh theo tài khoản" />
-                    )}
+            <button type="button" className="w3-button w3-outline" disabled={working || listLoading}
+                onClick={() => setListRevision(value => value + 1)}>Tải lại danh sách</button>
+        </div>
+        {branchError && <p className="w3-alert w3-error" role="alert">{branchError}</p>}
+        {!isBranchId(branchId) && <p className="w3-alert w3-error">Chọn chi nhánh hợp lệ trước khi tải phiếu.</p>}
+        {listError && <p className="w3-alert w3-error" role="alert">{listError}</p>}
+        <div className="w3-panel">
+            <div className="w3-panel-heading"><h3>Phiếu giao cho chi nhánh</h3>
+                <span>{listLoading ? 'Đang tải…' : (listing?.total ?? 0) + ' phiếu'}</span></div>
+            {listLoading ? <p role="status">Đang tải danh sách phiếu…</p> : listing?.items.length ? <div className="w3-transfer-list">
+                {listing.items.map(item => <button type="button" key={item.id}
+                    className={'w3-transfer-choice' + (selectedId === item.id ? ' is-selected' : '')}
+                    disabled={working || detailLoading} aria-pressed={selectedId === item.id}
+                    onClick={() => { if (discardAllowed()) {
+                        setDetails(null); setRequiresReload(true); setDirty(false); onUnsavedChange?.(false);
+                        setSelectedId(item.id); if (selectedId === item.id) setDetailRevision(value => value + 1);
+                    } }}>
+                    <strong>{item.number}</strong><span>{showDate(item.postedAt)}</span>
+                    {item.legacyReceivingRequired && <span>Chuyển kho lịch sử — cần đối chiếu</span>}
+                    <span>{item.receipt ? statusName[item.receipt.status] : statusName.AWAITING_RECEIVING}</span>
+                </button>)}
+            </div> : !listError && <p className="w3-empty">Không có phiếu trong trang và bộ lọc hiện tại.</p>}
+            <div className="w3-pagination">
+                <button type="button" className="w3-button w3-outline" disabled={working || listLoading || page <= 1}
+                    onClick={() => changeScope(() => setPage(value => value - 1))}>Trang trước</button>
+                <span>Trang {page}/{listing?.totalPages ?? 1} · 50 phiếu/trang</span>
+                <button type="button" className="w3-button w3-outline" disabled={working || listLoading || !listing || page >= listing.totalPages}
+                    onClick={() => changeScope(() => setPage(value => value + 1))}>Trang sau</button>
+            </div>
+        </div>
+        {error && <div className="w3-alert w3-error" role="alert">{error}</div>}
+        {notice && <div className="w3-alert w3-success" role="status">{notice}</div>}
+        {selectedId && <button type="button" className="w3-button w3-outline" disabled={working || detailLoading} onClick={reloadDetails}>Tải lại biên bản từ máy chủ</button>}
+        {detailLoading && <p className="w3-panel" role="status">Đang tải biên bản nhận hàng…</p>}
+        {details && <>
+            <div className="w3-summary">
+                <div><span>Phiếu chuyển kho</span><strong>{details.transfer.code}</strong></div>
+                <div><span>Nguồn giao</span><strong>{details.transfer.sourceBranch.code} — {details.transfer.sourceBranch.name}</strong></div>
+                <div><span>Chi nhánh nhận</span><strong>{details.transfer.destinationBranch.code} — {details.transfer.destinationBranch.name}</strong></div>
+                <div><span>Trạng thái nhận</span><strong>{statusName[details.receivingStatus]}</strong><span>Đã hạch toán B5: {showDate(details.transfer.postedAt)}</span></div>
+            </div>
+            {requiresReload && <p className="w3-alert w3-warning">Tạm khóa thao tác ghi. Xuất JSON nếu cần giữ nội dung đang nhập, sau đó tải lại biên bản để đối chiếu kết quả.</p>}
+            {details.transfer.legacyReceivingRequired && <div className="w3-panel w3-notes">
+                <h3>Đối chiếu chuyển kho lịch sử</h3>
+                <p>ADMIN hoặc quản lý chi nhánh nhận xác minh số thực nhận và hỏng từ chứng từ. Không biết số lượng hoặc chưa rõ hàng đã giao thì giữ chưa xác nhận; không suy từ lượng theo phiếu.</p>
+                <label htmlFor="w3-physical-date">Ngày giờ đã nhận thực tế (giờ thiết bị)</label>
+                <input id="w3-physical-date" type="datetime-local" step="1" value={physicalReceivedAt} disabled={readOnly}
+                    onChange={event => { setPhysicalReceivedAt(event.target.value); setDirty(true); onUnsavedChange?.(true); setNotice(''); }} />
+                <label htmlFor="w3-evidence">Tham chiếu chứng từ và nội dung xác minh (bắt buộc)</label>
+                <textarea id="w3-evidence" rows={3} maxLength={1000} value={legacyEvidence} disabled={readOnly}
+                    onChange={event => { setLegacyEvidence(event.target.value); setDirty(true); onUnsavedChange?.(true); setNotice(''); }} />
+                {!legacyComplete && <p className="w3-field-error">Cần bằng chứng và ngày nhận hợp lệ, không ở tương lai, trước khi lưu đối chiếu.</p>}
+                <p>Thời điểm xác nhận và người xác nhận được ghi riêng khi khóa biên bản. Đối chiếu lịch sử không thay đổi tồn kho.</p>
+            </div>}
+            <div className="w3-panel">
+                <div className="w3-panel-heading"><div><h3>Kiểm đếm hàng thực nhận</h3>
+                    <p>Thực nhận bao gồm hàng hỏng. Nhập 0 nếu không nhận được; để trống nghĩa là chưa kiểm đếm.</p></div>
+                    <span className="w3-progress">{rows.filter(row => !row.problem).length}/{rows.length} dòng hợp lệ</span>
                 </div>
-                <div className="w3-field">
-                    <label htmlFor="w3-transfer">Phiếu chuyển kho đã xác nhận (POSTED)</label>
-                    <select id="w3-transfer" value={selectedId} disabled={busy || loadingDetail || transfers.length === 0} onChange={event => setSelectedId(event.target.value)}>
-                        <option value="">{busy ? 'Đang tải phiếu…' : transfers.length === 0 ? 'Chưa có phiếu phù hợp' : 'Chọn phiếu nhận hàng'}</option>
-                        {transfers.map(item => <option key={item.id} value={item.id}>{item.number} — {formatDate(item.postedAt)}</option>)}
-                    </select>
-                </div>
-                <button className="w3-button w3-outline" type="button" disabled={busy || loadingDetail} onClick={() => setVersion(n => n + 1)}>↻ Tải lại</button>
+                <div className="w3-table-wrap"><table className="w3-table w3-receiving-table">
+                    <thead><tr><th>Mã / nguyên liệu</th><th>ĐVT</th><th>Theo phiếu</th><th>Thực nhận</th><th>Hỏng</th>
+                        <th>Dùng được</th><th>Thiếu</th><th>Thừa</th><th>Giải thích chênh lệch</th></tr></thead>
+                    <tbody>{rows.map(row => <tr key={row.ingredientId}>
+                        <td><strong>{row.code}</strong><br />{row.name}</td><td>{row.unit}</td>
+                        <td className="w3-amount">{showQuantity(row.plannedQuantity)}</td>
+                        <td><input aria-label={'Thực nhận ' + row.name} value={row.entry.received} disabled={readOnly}
+                            inputMode="decimal" placeholder="Chưa đếm" onChange={event => edit(row.ingredientId, 'received', event.target.value)} /></td>
+                        <td><input aria-label={'Hỏng ' + row.name} value={row.entry.damaged} disabled={readOnly}
+                            inputMode="decimal" onChange={event => edit(row.ingredientId, 'damaged', event.target.value)} /></td>
+                        <td className="w3-amount">{row.calculations ? showQuantity(row.calculations.usableQuantity) : '—'}</td>
+                        <td className="w3-amount">{row.calculations ? showQuantity(row.calculations.shortageQuantity) : '—'}</td>
+                        <td className="w3-amount">{row.calculations ? showQuantity(row.calculations.overageQuantity) : '—'}</td>
+                        <td><input aria-label={'Giải thích ' + row.name} value={row.entry.note} maxLength={300} disabled={readOnly}
+                            placeholder={row.calculations?.hasDiscrepancy ? 'Bắt buộc giải thích' : 'Không bắt buộc'} onChange={event => edit(row.ingredientId, 'note', event.target.value)} />
+                            {row.problem && !readOnly && <small className="w3-field-error">{row.problem}</small>}</td>
+                    </tr>)}</tbody>
+                </table></div>
+                <p className="w3-footnote">Chênh lệch là thông tin cần đối chiếu, không tự chứng minh lỗi của người giao hoặc người nhận.</p>
             </div>
-            {error && <div className="w3-alert w3-error" role="alert">{error}</div>}
-            {notice && <div className="w3-alert w3-success" role="status">{notice}</div>}
-            {!isAdmin && !session.user.branchId && <div className="w3-alert w3-error">Tài khoản chưa gắn chi nhánh; cần quản trị viên kiểm tra phân quyền.</div>}
-            {branchId && !busy && transfers.length === 0 && !error && <div className="w3-panel w3-empty">Chưa tìm thấy phiếu chuyển kho POSTED cho chi nhánh này trong danh sách API trả về.</div>}
-            {loadingDetail && <div className="w3-panel w3-empty">Đang tải chi tiết phiếu chuyển kho…</div>}
-            {transfer && (
-                <>
-                    <div className="w3-summary">
-                        <div><span>Mã phiếu</span><strong>{transfer.number}</strong></div>
-                        <div><span>Kho / chi nhánh nguồn</span><strong className="w3-id">{transfer.sourceBranchId}</strong></div>
-                        <div><span>Chi nhánh nhận</span><strong className="w3-id">{transfer.destinationBranchId}</strong></div>
-                        <div><span>Thời điểm ghi nhận B5</span><strong>{formatDate(transfer.postedAt)}</strong></div>
-                    </div>
-                    <div className="w3-panel">
-                        <div className="w3-panel-heading"><div><h3>Kiểm đếm hàng thực nhận</h3><p>Nhập <b>0</b> nếu không nhận được; để trống nghĩa là chưa kiểm. Nếu thiếu/thừa hoặc hỏng, phải ghi rõ lý do.</p></div>
-                            <span className="w3-progress">Đã đếm {review.counted}/{review.total}</span></div>
-                        <div className="w3-table-wrap">
-                            <table className="w3-table">
-                                <thead><tr><th>Mã</th><th>Nguyên liệu</th><th>ĐVT</th><th>Số giao theo phiếu</th><th>Thực nhận</th><th>Hỏng / lỗi</th><th>Thiếu / thừa</th><th>Ghi chú</th></tr></thead>
-                                <tbody>
-                                    {transfer.items.map(item => {
-                                        const entry = entries[item.ingredientId] ?? { received: '', damaged: '0', note: '' };
-                                        const valid = entry.received === '' || (validQuantity(entry.received, item.unit) && validQuantity(entry.damaged, item.unit) && lessOrEqual(entry.damaged, entry.received));
-                                        const counted = validQuantity(entry.received, item.unit);
-                                        const delta = counted ? deltaQuantity(entry.received, item.plannedQuantity) : '';
-                                        const issue = counted && (delta !== '0' || Number(entry.damaged) > 0);
-                                        return (
-                                            <tr key={item.ingredientId}>
-                                                <td className="w3-code">{item.code || '—'}</td>
-                                                <td><strong>{item.name}</strong></td>
-                                                <td>{item.unit}</td>
-                                                <td className="w3-amount">{formatQuantity(item.plannedQuantity)}</td>
-                                                <td><input aria-label={`Thực nhận ${item.name}`} className={!valid ? 'w3-invalid' : ''} value={entry.received} placeholder="Chưa đếm" inputMode="decimal" onChange={event => update(item.ingredientId, 'received', event.target.value)} /></td>
-                                                <td><input aria-label={`Hàng hỏng ${item.name}`} value={entry.damaged} inputMode="decimal" onChange={event => update(item.ingredientId, 'damaged', event.target.value)} /></td>
-                                                <td className={`w3-amount ${issue ? 'w3-issue' : ''}`}>{delta || '—'}</td>
-                                                <td><input aria-label={`Ghi chú ${item.name}`} value={entry.note} maxLength={300} placeholder={issue ? 'Bắt buộc khi có chênh lệch' : 'Không bắt buộc'} onChange={event => update(item.ingredientId, 'note', event.target.value)} /></td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                        </div>
-                        <p className="w3-footnote">Giá trị chênh lệch = thực nhận − số lượng trên phiếu B5. Chênh lệch này không tự chứng minh lỗi của người giao hay người nhận.</p>
-                    </div>
-                    <div className="w3-bottom">
-                        <div className="w3-panel w3-notes"><label htmlFor="w3-note">Ghi chú toàn phiếu</label>
-                            <textarea id="w3-note" value={overallNote} rows={5} maxLength={500} placeholder="Hàng đóng gói sai, giao thiếu, hư hại khi vận chuyển, ảnh/chứng từ đối chiếu…" onChange={event => setOverallNote(event.target.value)} />
-                            <p>Biên bản chỉ được lưu khi bạn tải tệp về. Thay đổi trong trang sẽ mất nếu tải lại.</p>
-                        </div>
-                        <div className="w3-panel w3-export">
-                            <h3>Kết quả đối chiếu</h3>
-                            <div className="w3-summary-line"><span>Nguyên liệu đã kiểm</span><strong>{review.counted}/{review.total}</strong></div>
-                            <div className="w3-summary-line"><span>Dòng có chênh lệch / hỏng</span><strong>{review.issues}</strong></div>
-                            <button className="w3-button w3-primary" type="button" disabled={!review.complete} onClick={exportReport}>Xuất biên bản đối chiếu (.json)</button>
-                            {!review.complete && <small>Hãy nhập đủ số thực nhận, số hỏng hợp lệ và lý do cho các dòng bất thường.</small>}
-                            <p className="w3-warning-text">Không có nút “Đã nhận đủ” trên Backend ở W3. Biên bản này chưa có giá trị xác nhận giao nhận trong cơ sở dữ liệu.</p>
-                        </div>
-                    </div>
-                </>
-            )}
-        </section>
-    );
+            <div className="w3-bottom">
+                <div className="w3-panel w3-notes"><label htmlFor="w3-note">Ghi chú toàn biên bản</label>
+                    <textarea id="w3-note" value={note} maxLength={500} rows={4} disabled={readOnly}
+                        onChange={event => { setNote(event.target.value); setDirty(true); onUnsavedChange?.(true); setNotice(''); }} />
+                    {dirty && <p>Đang có thay đổi chưa lưu trên máy chủ.</p>}
+                    {details.receipt && <p>Biên bản: {details.receipt.id}<br />Phiên bản: {details.receipt.version}<br />
+                        Người lập: {details.receipt.createdById}<br />Cập nhật: {showDate(details.receipt.updatedAt)}</p>}
+                    {details.receipt?.status === 'CONFIRMED' && <p>Người xác nhận: {details.receipt.receivedById}<br />
+                        Xác nhận lúc: {showDate(details.receipt.confirmedAt)}. Biên bản đã khóa chỉnh sửa.</p>}
+                </div>
+                <div className="w3-panel w3-export">
+                    <h3>Lưu và xác nhận</h3>
+                    <div className="w3-summary-line"><span>Dòng thiếu / thừa / hỏng</span><strong>{issueCount}</strong></div>
+                    {details.receipt?.status !== 'CONFIRMED' && <div className="w3-action-stack">
+                        <button type="button" className="w3-button w3-primary" disabled={!canSave} onClick={() => { void persist(false); }}>
+                            {working ? 'Đang xử lý…' : details.receipt ? 'Lưu chỉnh sửa' : 'Lưu biên bản nháp'}</button>
+                        <button type="button" className="w3-button w3-primary" disabled={!canConfirm} onClick={() => { void persist(true); }}>{details.transfer.legacyReceivingRequired ? 'Xác nhận đối chiếu lịch sử' : 'Xác nhận nhận hàng'}</button>
+                        <small>Nhập đủ lượng hợp lệ và giải thích để lưu nháp. Lưu mọi thay đổi trước khi xác nhận.</small>
+                    </div>}
+                    <button type="button" className="w3-button w3-outline" onClick={exportReport}>Xuất bản sao JSON</button>
+                    <p className="w3-warning-text">Lưu nháp và xác nhận đều không cộng hoặc trừ tồn. B6 chỉ chốt sau khi mọi chuyển kho đến đã được xác nhận nhận.</p>
+                </div>
+            </div>
+        </>}
+    </section>;
 }

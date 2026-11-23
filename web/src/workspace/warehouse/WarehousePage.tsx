@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { AuthSession } from '../auth';
 import {
     displayQuantity, isUuid, loadBalances, loadBranches, loadForecast,
     validBusinessDate, type BalanceResult, type Branch, type ForecastPlan, type WorkShift,
 } from './warehouse.api';
 import { buildDispatchDraft, lineId, validateDispatchQuantity } from './delivery-draft';
+import DispatchTransfersPanel from './DispatchTransfersPanel';
 import './WarehousePage.css';
 
 type Props = {
@@ -12,6 +13,10 @@ type Props = {
     mode: 'inventory' | 'planning' | 'delivery';
     plan: ForecastPlan | null;
     onPlanChange: (value: ForecastPlan | null) => void;
+    onDirtyChange?: (value: boolean) => void;
+    onWorkingChange?: (value: boolean) => void;
+    onOpenTransfer?: (id: string) => void;
+    onOpenPlanning?: () => void;
 };
 const SHIFTS: { value: WorkShift; label: string }[] = [
     { value: 'MORNING', label: 'Ca sáng' },
@@ -24,7 +29,9 @@ function errorMessage(cause: unknown): string {
 }
 function vnDateTomorrow(): string {
     const date = new Date(Date.now() + 86400000);
-    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
+    const part = (type: string) => parts.find(item => item.type === type)?.value ?? '';
+    return `${part('year')}-${part('month')}-${part('day')}`;
 }
 function downloadJson(value: string, filename: string): void {
     const url = URL.createObjectURL(new Blob([value], { type: 'application/json;charset=utf-8' }));
@@ -37,7 +44,7 @@ function downloadJson(value: string, filename: string): void {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export default function WarehousePage({ session, mode, plan, onPlanChange }: Props) {
+export default function WarehousePage({ session, mode, plan, onPlanChange, onDirtyChange, onWorkingChange, onOpenTransfer, onOpenPlanning }: Props) {
     const isAdmin = session.user.role === 'ADMIN';
     const canSeeInventory = isAdmin || session.user.role === 'BRANCH_MANAGER';
     const [branches, setBranches] = useState<Branch[]>([]);
@@ -57,6 +64,13 @@ export default function WarehousePage({ session, mode, plan, onPlanChange }: Pro
     const [deliveryTime, setDeliveryTime] = useState('06:30');
     const [assignedTo, setAssignedTo] = useState('');
     const [dispatchNote, setDispatchNote] = useState('');
+    const [dispatchWorking, setDispatchWorking] = useState(false);
+    const [dispatchUnresolved, setDispatchUnresolved] = useState(false);
+    const forecastLock = useRef(false);
+    const localDirty = Boolean(plan && (Object.keys(quantities).length || Object.keys(selected).length || assignedTo || dispatchNote || deliveryTime !== '06:30'));
+    useEffect(() => { onDirtyChange?.(localDirty || dispatchUnresolved); }, [localDirty, dispatchUnresolved, onDirtyChange]);
+    useEffect(() => { onWorkingChange?.(busy || dispatchWorking); }, [busy, dispatchWorking, onWorkingChange]);
+    useEffect(() => () => { onDirtyChange?.(false); onWorkingChange?.(false); }, [onDirtyChange, onWorkingChange]);
 
     useEffect(() => {
         if (!isAdmin) return;
@@ -65,7 +79,6 @@ export default function WarehousePage({ session, mode, plan, onPlanChange }: Pro
             if (!active) return;
             setBranches(items);
             setBranchId(previous => previous || items[0]?.id || '');
-            setSourceBranchId(previous => previous || items[0]?.id || '');
         }).catch(cause => { if (active) setError(errorMessage(cause)); })
             .finally(() => { if (active) setLoadingBranches(false); });
         return () => { active = false; };
@@ -96,11 +109,13 @@ export default function WarehousePage({ session, mode, plan, onPlanChange }: Pro
     }
     async function requestForecast(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        if (!isAdmin) return;
+        if (!isAdmin || forecastLock.current || dispatchWorking || dispatchUnresolved) return;
         if (destinations.length < 1 || destinations.length > 10 || destinations.includes(sourceBranchId)) {
             setError('Chọn 1–10 điểm nhận khác kho nguồn.'); return;
         }
         if (!validBusinessDate(businessDate)) { setError('Ngày dự báo không hợp lệ.'); return; }
+        if (localDirty && !window.confirm('Tải đề xuất mới sẽ đặt lại các dòng phân bổ lượng giao đang sửa. Bạn muốn tiếp tục?')) return;
+        forecastLock.current = true;
         setBusy(true); setError(''); setNotice('');
         try {
             const response = await loadForecast(session, { sourceBranchId, destinationBranchIds: destinations, businessDate, shift });
@@ -108,7 +123,7 @@ export default function WarehousePage({ session, mode, plan, onPlanChange }: Pro
             setQuantities({}); setSelected({});
             setNotice('Đã tải đề xuất B7. Đây là kế hoạch tham khảo, chưa tạo phiếu chuyển kho.');
         } catch (cause) { setError(errorMessage(cause)); }
-        finally { setBusy(false); }
+        finally { forecastLock.current = false; setBusy(false); }
     }
     function exportDispatch() {
         if (!plan) return;
@@ -134,7 +149,7 @@ export default function WarehousePage({ session, mode, plan, onPlanChange }: Pro
                     <h2>{mode === 'inventory' ? 'Kho & tồn nguyên liệu' : mode === 'planning' ? 'Đề xuất bổ sung cho ca tới' : 'Chuẩn bị & phân chia hàng giao'}</h2>
                     <p>{mode === 'inventory' ? 'Xem số dư theo chi nhánh từ Backend B3.' : mode === 'planning' ? 'Xem nhu cầu dự báo theo điểm bán, ca và loại ngày từ B7.' : 'Từ kế hoạch B7, lập danh sách giao dự kiến để đối chiếu và bàn giao.'}</p>
                 </div>
-                <span className="w5-badge">{mode === 'delivery' ? 'BẢN NHÁP CHƯA GHI DB' : 'CHỈ ĐỌC API'}</span>
+                <span className="w5-badge">{mode === 'delivery' ? 'NHÁP CỤC BỘ → PHIẾU B5 DRAFT' : 'CHỈ ĐỌC API'}</span>
             </div>
             <div className="w5-alert" role="note">
                 {mode === 'inventory' ? (
@@ -142,7 +157,7 @@ export default function WarehousePage({ session, mode, plan, onPlanChange }: Pro
                 ) : mode === 'planning' ? (
                     <>Dự báo B7 sử dụng dữ liệu kiểm kê; sai lệch kiểm kê chưa đồng nghĩa với tiêu thụ bán hàng. Lượng đề xuất cần được kho xác minh trước khi lập chứng từ B5.</>
                 ) : (
-                    <>W5 <strong>không tự POST phiếu chuyển kho và không tự trừ tồn</strong>. File JSON chỉ là phiếu chuẩn bị nội bộ, chưa được ký giao, ký nhận hoặc đồng bộ hệ thống.</>
+                    <>Xem lại lượng giao rồi xác nhận tạo phiếu B5 DRAFT ở cuối danh sách. Mở từng phiếu để POST bằng thao tác riêng. JSON là bản sao nháp cục bộ; giờ giao và người phụ trách chưa có backend lưu lịch.</>
                 )}
             </div>
             {error && <div className="w5-error" role="alert">{error}</div>}
@@ -182,16 +197,16 @@ export default function WarehousePage({ session, mode, plan, onPlanChange }: Pro
                         <h3>Thông số lập kế hoạch</h3>
                         <div className="w5-controls">
                             <label>Kho/chi nhánh nguồn
-                                <select required value={sourceBranchId} disabled={busy || loadingBranches} onChange={event => { setSourceBranchId(event.target.value); setNotice(''); }}>
+                                <select required value={sourceBranchId} disabled={busy || dispatchWorking || loadingBranches} onChange={event => { setSourceBranchId(event.target.value); setNotice(''); }}>
                                     <option value="">Chọn nguồn xuất hàng</option>
                                     {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.code} — {branch.name}</option>)}
                                 </select>
                             </label>
                             <label>Ngày cần hàng
-                                <input type="date" required value={businessDate} onChange={event => { setBusinessDate(event.target.value); setNotice(''); }} />
+                                <input type="date" required value={businessDate} disabled={busy || dispatchWorking} onChange={event => { setBusinessDate(event.target.value); setNotice(''); }} />
                             </label>
                             <label>Ca cần hàng
-                                <select value={shift} onChange={event => { setShift(event.target.value as WorkShift); setNotice(''); }}>
+                                <select value={shift} disabled={busy || dispatchWorking} onChange={event => { setShift(event.target.value as WorkShift); setNotice(''); }}>
                                     {SHIFTS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
                                 </select>
                             </label>
@@ -207,7 +222,8 @@ export default function WarehousePage({ session, mode, plan, onPlanChange }: Pro
                                 ))}
                             </div>
                         </fieldset>
-                        <button className="w5-primary" type="submit" disabled={busy || loadingBranches}>{busy ? 'Đang tính…' : 'Tải đề xuất từ B7'}</button>
+                        <button className="w5-primary" type="submit" disabled={busy || dispatchWorking || dispatchUnresolved || loadingBranches}>{busy ? 'Đang tính…' : 'Tải đề xuất từ B7'}</button>
+                        {dispatchUnresolved && <p className="w5-caution">Còn bộ mã chuyển kho cần đối chiếu. Mở Điều phối giao hàng để hoàn tất trước khi thay kế hoạch.</p>}
                     </form>
                     {plan && selectedInputMatchesPlan && (
                         <div className="w5-panel">
@@ -230,11 +246,12 @@ export default function WarehousePage({ session, mode, plan, onPlanChange }: Pro
 
             {mode === 'delivery' && (
                 !plan ? (
-                    <div className="w5-panel w5-empty">Chưa có kế hoạch B7 trong phiên này. Mở mục <strong>Đề xuất bổ sung</strong>, chọn nguồn và điểm nhận rồi tải dự báo trước.</div>
+                    <div className="w5-panel w5-empty">Chưa có kế hoạch B7 trong phiên này. <button type="button" onClick={onOpenPlanning}>Mở Đề xuất bổ sung</button>, chọn nguồn và điểm nhận rồi tải dự báo trước.</div>
                 ) : (
                     <div className="w5-panel">
                         <div className="w5-panel-title"><h3>Danh sách chuẩn bị hàng</h3><span>{plan.businessDate} · {SHIFTS.find(item => item.value === plan.shift)?.label}</span></div>
                         <p className="w5-muted">Kho xuất: <strong>{plan.sourceBranch.code} — {plan.sourceBranch.name}</strong>. Dữ liệu dự báo được tải lúc {new Date(plan.fetchedAt).toLocaleString('vi-VN')}. Không thay cho phiếu B5.</p>
+                        <fieldset className="w5-dispatch-fields" disabled={dispatchWorking}>
                         <div className="w5-controls">
                             <label>Giờ dự kiến giao (theo giờ VN)
                                 <input type="time" value={deliveryTime} onChange={event => setDeliveryTime(event.target.value)} />
@@ -261,10 +278,15 @@ export default function WarehousePage({ session, mode, plan, onPlanChange }: Pro
                             <textarea maxLength={500} rows={3} value={dispatchNote} onChange={event => setDispatchNote(event.target.value)} placeholder="Ghi giờ hẹn, điểm bàn giao, lưu ý nguyên liệu…" />
                         </label>
                         <button type="button" className="w5-primary" onClick={exportDispatch}>Xuất danh sách chuẩn bị nháp JSON</button>
-                        <p className="w5-caution">Trước khi xuất phiếu thật cần kiểm tra lại tồn kho B3, đối chiếu người nhận và tạo phiếu B5 qua quy trình có quyền duyệt. Xuất JSON không xác nhận đã giao hàng.</p>
+                        </fieldset>
                     </div>
                 )
             )}
+            <div hidden={mode !== 'delivery'}>
+                <DispatchTransfersPanel session={session} plan={plan} quantities={quantities} selected={selected}
+                    deliveryTime={deliveryTime} assignedTo={assignedTo} note={dispatchNote}
+                    onDirtyChange={setDispatchUnresolved} onWorkingChange={setDispatchWorking} onOpenTransfer={onOpenTransfer} />
+            </div>
         </section>
     );
 }

@@ -1,5 +1,5 @@
 import type { ProductSize } from '../generated/prisma/client';
-import { RequestError } from './ingredient.validation';
+import { RequestError } from './request-error';
 import { validateId } from './ingredient.postgres.validation';
 import { decimalInput } from './decimal';
 export { validateId } from './ingredient.postgres.validation';

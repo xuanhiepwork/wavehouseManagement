@@ -17,6 +17,7 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+.vitest/
 
 # ====================================================================
 # ENVIRONMENT VARIABLES (File chứa thông tin mật, token, key AI - Cấm push)

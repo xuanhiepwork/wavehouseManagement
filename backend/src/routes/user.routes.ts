@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type { PrismaClient } from '../generated/prisma/client';
+import type { Prisma, PrismaClient } from '../generated/prisma/client';
 import { hashPassword } from '../services/password.service';
 import {
     UUID_RE,
@@ -38,7 +38,7 @@ export function createUserRouter(
 ) {
     const router = Router();
 
-    // GET /api/users?page=1
+    // GET /api/users?page=1&q=...&role=STAFF&branchId=...&isActive=true
     router.get('/', async (req, res) => {
         const page = readPage(req.query.page);
 
@@ -47,12 +47,35 @@ export function createUserRouter(
             return;
         }
 
+        const { q, role, branchId, isActive } = req.query;
+        if (
+            (q !== undefined && (typeof q !== 'string' || q.trim().length > 120)) ||
+            (role !== undefined && role !== 'ADMIN' && !managedRole(role)) ||
+            (branchId !== undefined && (typeof branchId !== 'string' || !UUID_RE.test(branchId))) ||
+            (isActive !== undefined && isActive !== 'true' && isActive !== 'false')
+        ) {
+            res.status(400).json({ error: 'Invalid user filters' });
+            return;
+        }
+
+        const where: Prisma.UserWhereInput = {};
+        if (typeof q === 'string' && q.trim()) {
+            where.OR = [
+                { email: { contains: q.trim(), mode: 'insensitive' } },
+                { displayName: { contains: q.trim(), mode: 'insensitive' } },
+            ];
+        }
+        if (role === 'ADMIN' || role === 'STAFF' || role === 'BRANCH_MANAGER') where.role = role;
+        if (typeof branchId === 'string') where.branchId = branchId;
+        if (isActive !== undefined) where.isActive = isActive === 'true';
+
         try {
             const [total, items] = await Promise.all([
-                prisma.user.count(),
+                prisma.user.count({ where }),
                 prisma.user.findMany({
+                    where,
                     select: userSelect,
-                    orderBy: { createdAt: 'desc' },
+                    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
                     skip: (page - 1) * 50,
                     take: 50,
                 }),

@@ -45,3 +45,4 @@
 .w5-quantity { min-width: 115px; max-width: 140px; }
 .w5-invalid { display: block; max-width: 150px; white-space: normal; color: #a34d41 !important; }
 .w5-note-label { margin: 20px 0; max-width: 850px; }
+.w5-dispatch-fields { border: 0; margin: 0; padding: 0; min-width: 0; }

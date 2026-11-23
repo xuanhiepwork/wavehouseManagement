@@ -1,6 +1,8 @@
 
 import { Router, type RequestHandler, type Response } from 'express';
 import { Prisma, type PrismaClient } from '../generated/prisma/client';
+import { createStockTransferReceiptRouter } from './transfer-receipt.routes';
+import { lockReceivingBranches, ReceivingGuardError, isReceivingTransactionConflict } from '../services/receiving-guard.service';
 import {
     applyInventoryMovement,
     InventoryError,
@@ -125,6 +127,34 @@ function parseLines(value: unknown): Line[] | null {
     return result;
 }
 
+async function validateIngredients(
+    tx: Prisma.TransactionClient,
+    items: Line[],
+    kind: Kind
+) {
+    const ingredients = await tx.ingredient.findMany({
+        where: {
+            id: { in: items.map(item => item.ingredientId) },
+            isActive: true,
+        },
+        select: { id: true, unit: true },
+    });
+
+    if (ingredients.length !== items.length) {
+        throw new StockDocumentError('Ingredient unavailable');
+    }
+
+    if (kind === 'TRANSFER') {
+        const units = new Map(ingredients.map(ingredient => [ingredient.id, ingredient.unit]));
+        if (items.some(item =>
+            units.get(item.ingredientId) === 'piece' &&
+            !new Prisma.Decimal(item.quantity).isInteger()
+        )) {
+            throw new StockDocumentError('Piece quantities must be whole numbers', 400);
+        }
+    }
+}
+
 function parseNote(value: unknown): string | null | undefined | false {
     if (value === undefined) return undefined;
     if (value === null) return null;
@@ -135,6 +165,10 @@ function parseNote(value: unknown): string | null | undefined | false {
 }
 
 function sendError(res: Response, error: unknown) {
+    if (error instanceof ReceivingGuardError) {
+        res.status(error.status).json({ error: error.message, code: error.code });
+        return;
+    }
     if (
         error instanceof StockDocumentError ||
         error instanceof InventoryError
@@ -150,7 +184,7 @@ function sendError(res: Response, error: unknown) {
         return;
     }
 
-    if (code === 'P2034') {
+    if (isReceivingTransactionConflict(error)) {
         res.status(409).json({
             error: 'Concurrent inventory update. Please retry.',
         });
@@ -165,6 +199,7 @@ export function createStockDocumentRouter(
     kind: Kind
 ) {
     const router = Router();
+    if (kind === 'TRANSFER') router.use(createStockTransferReceiptRouter(prisma));
 
     // Transfers require ADMIN to perform writes.
     // Issues can also be managed by the branch manager.
@@ -187,11 +222,17 @@ export function createStockDocumentRouter(
         const actor = actorOf(res);
         const page = readPage(req.query.page);
         const filter = req.query.sourceBranchId;
+        const destination = req.query.destinationBranchId;
+        const status = req.query.status;
+        const requestedCode = req.query.code;
 
         if (
             page === null ||
             (filter !== undefined &&
-                (typeof filter !== 'string' || !UUID_RE.test(filter)))
+                (typeof filter !== 'string' || !UUID_RE.test(filter))) ||
+            (destination !== undefined && (kind !== 'TRANSFER' || typeof destination !== 'string' || !UUID_RE.test(destination))) ||
+            (status !== undefined && status !== 'DRAFT' && status !== 'POSTED' && status !== 'CANCELLED') ||
+            (requestedCode !== undefined && (typeof requestedCode !== 'string' || !/^[A-Z0-9][A-Z0-9_-]{2,39}$/.test(requestedCode)))
         ) {
             res.status(400).json({ error: 'Invalid query' });
             return;
@@ -202,12 +243,20 @@ export function createStockDocumentRouter(
             return;
         }
 
-        const where = {
+        if (typeof destination === 'string' && actor.role !== 'ADMIN' && destination.toLowerCase() !== actor.branchId) {
+            res.status(403).json({ error: 'Forbidden' });
+            return;
+        }
+
+        const where: Prisma.StockDocumentWhereInput = {
             type: kind,
             ...readableScope(actor, kind),
             ...(typeof filter === 'string'
                 ? { sourceBranchId: filter }
                 : {}),
+            ...(typeof destination === 'string' ? { destinationBranchId: destination.toLowerCase() } : {}),
+            ...(status === 'DRAFT' || status === 'POSTED' || status === 'CANCELLED' ? { status } : {}),
+            ...(typeof requestedCode === 'string' ? { code: requestedCode } : {}),
         };
 
         try {
@@ -224,6 +273,8 @@ export function createStockDocumentRouter(
                         destinationBranchId: true,
                         createdAt: true,
                         postedAt: true,
+                        legacyReceivingRequired: true,
+                        transferReceipt: { select: { id: true, status: true, version: true, confirmedAt: true } },
                     },
                     orderBy: [
                         { createdAt: 'desc' },
@@ -365,16 +416,7 @@ export function createStockDocumentRouter(
                     throw new StockDocumentError('Branch unavailable');
                 }
 
-                const activeIngredients = await tx.ingredient.count({
-                    where: {
-                        id: { in: items.map(item => item.ingredientId) },
-                        isActive: true,
-                    },
-                });
-
-                if (activeIngredients !== items.length) {
-                    throw new StockDocumentError('Ingredient unavailable');
-                }
+                await validateIngredients(tx, items, kind);
 
                 return tx.stockDocument.create({
                     data: {
@@ -445,18 +487,7 @@ export function createStockDocumentRouter(
                 }
 
                 if (items) {
-                    const count = await tx.ingredient.count({
-                        where: {
-                            id: {
-                                in: items.map(item => item.ingredientId),
-                            },
-                            isActive: true,
-                        },
-                    });
-
-                    if (count !== items.length) {
-                        throw new StockDocumentError('Ingredient unavailable');
-                    }
+                    await validateIngredients(tx, items, kind);
                 }
 
                 const changed = await tx.stockDocument.updateMany({
@@ -551,6 +582,10 @@ export function createStockDocumentRouter(
                         ? [document.destinationBranchId]
                         : []),
                 ];
+
+                // Shares a branch write barrier with receiving confirmation and B6.
+                // B5 still posts source/destination movements in this same transaction.
+                await lockReceivingBranches(tx, branchIds);
 
                 const activeBranches = await tx.branch.count({
                     where: {

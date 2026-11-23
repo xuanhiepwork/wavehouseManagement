@@ -13,6 +13,8 @@ import type { RecipeCreationClient, RecipeCreationModel } from './useRecipeCreat
 import { useRecipeLifecycle, useRecipeMutationLock } from './useRecipeLifecycle'
 import type { RecipeLifecycleClient, RecipeLifecycleModel } from './useRecipeLifecycle'
 import './Catalog.css'
+import { emptyCreationDraft } from './creation.validation'
+import { emptyRecipeDraft } from './recipe.validation'
 
 // List/detail views receive reads only. Creation models expose no Recipe lifecycle actions.
 type ReadClient = { [K in keyof CatalogClient]: Pick<CatalogClient[K], 'list' | 'detail'> }
@@ -261,7 +263,7 @@ function Workspace({ section, client, creation, recipeCreation, lifecycle }: { s
     </div>
   </>
 }
-export default function Catalog({ client }: { client: WorkspaceClient }) {
+export default function Catalog({ client, onDirtyChange, onWorkingChange }: { client: WorkspaceClient; onDirtyChange?: (value: boolean) => void; onWorkingChange?: (value: boolean) => void }) {
   const [section, setSection] = useState<Section>('ingredients')
   const ingredientCreation = useCatalogCreation('ingredients', client)
   const productCreation = useCatalogCreation('products', client)
@@ -269,6 +271,14 @@ export default function Catalog({ client }: { client: WorkspaceClient }) {
   const recipeCreation = useRecipeCreation(client, mutationLock)
   const lifecycle = useRecipeLifecycle(client, mutationLock)
   const busy = ingredientCreation.busy || productCreation.busy || recipeCreation.busy || lifecycle.locked
+  const dirty = JSON.stringify(ingredientCreation.draft) !== JSON.stringify(emptyCreationDraft())
+    || JSON.stringify(productCreation.draft) !== JSON.stringify(emptyCreationDraft())
+    || JSON.stringify(recipeCreation.draft) !== JSON.stringify(emptyRecipeDraft())
+    || ingredientCreation.phase === 'uncertain' || productCreation.phase === 'uncertain'
+    || recipeCreation.phase === 'uncertain' || lifecycle.phase === 'uncertain'
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty, onDirtyChange])
+  useEffect(() => { onWorkingChange?.(busy) }, [busy, onWorkingChange])
+  useEffect(() => () => { onDirtyChange?.(false); onWorkingChange?.(false) }, [onDirtyChange, onWorkingChange])
   return <div className="catalog-shell"><a className="skip-link" href="#catalog-main">Skip to catalog</a>
     <aside className="sidebar"><div className="brand"><span className="brand-mark" aria-hidden="true">W</span><div>WaveHouse<span>MANAGEMENT</span></div></div><p className="nav-label">Workspace</p>
       <nav aria-label="Catalog sections">{sections.map((item, index) => <button type="button" key={item} aria-current={section === item ? 'page' : undefined} disabled={busy} onClick={() => setSection(item)}><span className="nav-symbol" aria-hidden="true">{['◫', '◇', '≋'][index]}</span>{titles[item]}</button>)}</nav>

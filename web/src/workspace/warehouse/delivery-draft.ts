@@ -23,7 +23,8 @@ export function lineId(line: Pick<Recommendation, 'destinationBranchId' | 'ingre
 }
 export function validateDispatchQuantity(quantity: string, row: Recommendation): string | null {
     if (!isQuantity(quantity)) return 'Số lượng phải không âm, tối đa 6 chữ số thập phân.';
-    if (row.unit.toLowerCase() === 'piece' && !/^\d+$/.test(quantity)) return 'Nguyên liệu đơn vị piece cần số nguyên.';
+    // B7 serializes every quantity with six fractional places, including whole pieces.
+    if (row.unit.toLowerCase() === 'piece' && quantityScaled(quantity) % 1000000n !== 0n) return 'Nguyên liệu đơn vị piece cần số nguyên.';
     if (quantityScaled(quantity) > quantityScaled(row.proposedDeliveryQuantity)) {
         return 'Không được vượt lượng kho có thể cấp theo dự báo đã tải.';
     }

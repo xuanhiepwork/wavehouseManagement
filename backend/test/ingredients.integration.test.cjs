@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const mongoose = require('mongoose');
 const { Ingredient } = require('../dist/models/Ingredient');
-const { createApp } = require('../dist/app');
+const { createLegacyApp: createApp } = require('./helpers/catalog-app.cjs');
 
 // Deliberately do not load dotenv or use MONGO_URI. Only an explicitly supplied
 // dedicated test URI authorizes connecting. No database/collection is dropped.

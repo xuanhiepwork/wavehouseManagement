@@ -3,6 +3,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY tsconfig.json ./
+COPY prisma.offline.config.ts ./
+COPY prisma ./prisma
 COPY src ./src
 RUN npm run build
 

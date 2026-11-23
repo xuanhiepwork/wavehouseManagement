@@ -1,6 +1,7 @@
 
 import { Router, type RequestHandler, type Response } from 'express';
 import { Prisma, type PrismaClient } from '../generated/prisma/client';
+import { captureStockCountRevisions, assertStockCountRevisions, ReceivingGuardError, isReceivingTransactionConflict } from '../services/receiving-guard.service';
 import {
     applyInventoryMovement,
     InventoryError,
@@ -246,6 +247,10 @@ async function validateCoverage(
 }
 
 function sendError(res: Response, error: unknown) {
+    if (error instanceof ReceivingGuardError) {
+        res.status(error.status).json({ error: error.message, code: error.code });
+        return;
+    }
     if (
         error instanceof CountError ||
         error instanceof InventoryError
@@ -258,7 +263,7 @@ function sendError(res: Response, error: unknown) {
 
     const code = prismaErrorCode(error);
 
-    if (code === 'P2002' || code === 'P2034') {
+    if (code === 'P2002' || isReceivingTransactionConflict(error)) {
         res.status(409).json({
             error: 'Stock count conflict. Please refresh and retry.',
         });
@@ -361,9 +366,12 @@ export function createShiftStockCountRouter(
         const actor = actorOf(res);
         const page = readPage(req.query.page);
         const filter = req.query.branchId;
+        const dateFilter = req.query.businessDate === undefined ? undefined : parseDate(req.query.businessDate);
+        const shiftFilter = req.query.shift;
 
         if (
-            page === null ||
+            page === null || dateFilter === null ||
+            (shiftFilter !== undefined && shiftFilter !== 'MORNING' && shiftFilter !== 'AFTERNOON' && shiftFilter !== 'EVENING') ||
             (
                 filter !== undefined &&
                 (
@@ -385,8 +393,10 @@ export function createShiftStockCountRouter(
             return;
         }
 
-        const where = {
+        const where: Prisma.ShiftStockCountWhereInput = {
             ...scope(actor),
+            ...(dateFilter ? { businessDate: dateFilter } : {}),
+            ...(shiftFilter === 'MORNING' || shiftFilter === 'AFTERNOON' || shiftFilter === 'EVENING' ? { shift: shiftFilter } : {}),
             ...(
                 actor.role === 'ADMIN' &&
                     typeof filter === 'string'
@@ -659,6 +669,8 @@ export function createShiftStockCountRouter(
                     );
                 }
 
+                const revisions = await captureStockCountRevisions(tx, current.branchId);
+
                 const lines: CountLine[] = current.items.map(item => ({
                     ingredientId: item.ingredientId,
                     countedQuantity: item.countedQuantity.toFixed(6),
@@ -699,6 +711,8 @@ export function createShiftStockCountRouter(
                     data: {
                         status: 'SUBMITTED',
                         submittedAt: new Date(),
+                        submittedReceivingRevision: revisions.receivingRevision,
+                        submittedInventoryRevision: revisions.inventoryRevision,
                         returnReason: null,
                     },
                 });
@@ -777,6 +791,8 @@ export function createShiftStockCountRouter(
                         status: 'RETURNED',
                         returnReason: reason.trim(),
                         submittedAt: null,
+                        submittedReceivingRevision: null,
+                        submittedInventoryRevision: null,
                     },
                 });
 
@@ -828,6 +844,8 @@ export function createShiftStockCountRouter(
                     select: {
                         branchId: true,
                         submittedAt: true,
+                        submittedReceivingRevision: true,
+                        submittedInventoryRevision: true,
                         items: {
                             select: {
                                 ingredientId: true,
@@ -849,6 +867,8 @@ export function createShiftStockCountRouter(
                         'Count is not pending approval'
                     );
                 }
+
+                await assertStockCountRevisions(tx, current.branchId, current.submittedReceivingRevision, current.submittedInventoryRevision);
 
                 // No incoming/outgoing stock movement is allowed
                 // after the count snapshot was submitted.

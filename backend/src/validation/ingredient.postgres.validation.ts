@@ -1,5 +1,6 @@
 import type { BaseUnit } from '../generated/prisma/client';
-import { RequestError, validateQuery as legacyQuery } from './ingredient.validation';
+import { RequestError } from './request-error';
+import { catalogQuery } from './catalog-query';
 import { decimalInput } from './decimal';
 
 export interface PostgresIngredientInput {
@@ -40,8 +41,7 @@ export function validateBody(body: unknown, patch = false): PostgresIngredientIn
     return output as PostgresIngredientInput;
 }
 export function validateQuery(query: Record<string, unknown>) {
-    // Reuse the established public query checks, not its MongoDB filter/sort output.
-    const { page, limit } = legacyQuery(query);
+    const { page, limit } = catalogQuery(query, true);
     if ((page - 1) * limit > 2147483647) return invalid();
     for (const key of ['category', 'search']) {
         if (typeof query[key] === 'string' && query[key].includes('\0')) return invalid();

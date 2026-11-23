@@ -4,15 +4,17 @@
   "description": "",
   "main": "dist/server.js",
   "scripts": {
-    "test": "npm run build && node --test test/*.test.cjs",
+    "test": "npm run build && node scripts/test-unit.cjs",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "start": "node dist/server.js",
     "build": "npm run prisma:generate && tsc",
-    "prisma:validate": "prisma validate",
+    "prisma:validate": "prisma validate --config prisma.offline.config.ts",
     "prisma:status": "prisma migrate status",
     "prisma:deploy": "prisma migrate deploy",
     "test:postgres": "npm run build && node scripts/test-postgres.cjs",
-    "prisma:generate": "prisma generate"
+    "audit:postgres": "node scripts/audit-postgres-readonly.cjs",
+    "smoke:postgres": "node scripts/smoke-postgres-readonly.cjs",
+    "prisma:generate": "prisma generate --config prisma.offline.config.ts"
   },
   "keywords": [],
   "author": "",
@@ -25,13 +27,13 @@
     "cors": "^2.8.6",
     "dotenv": "^18.0.9",
     "express": "^5.3.0",
-    "mongoose": "^9.11.4",
     "pg": "8.23.1",
     "socket.io": "^4.8.4",
     "swagger-jsdoc": "^6.3.0",
     "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
+    "mongoose": "^9.11.4",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.5",

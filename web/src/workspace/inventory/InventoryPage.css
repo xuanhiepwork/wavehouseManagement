@@ -1,0 +1,29 @@
+.w75-inventory { display: grid; gap: 20px; color: #203c45; }
+.w75-inventory h2 { margin: 0 0 8px; font-size: 27px; }
+.w75-inventory header p:not(.w75-inventory-eyebrow) { margin: 0; color: #607b83; font-size: 13px; line-height: 1.7; }
+.w75-inventory-eyebrow { margin: 0 0 7px; color: #517c74; font-size: 10px; font-weight: 800; letter-spacing: 1.4px; }
+.w75-inventory-panel { padding: 24px; background: #fff; border: 1px solid #e0e9e9; border-radius: 14px; }
+.w75-inventory button, .w75-inventory select { font: inherit; }
+.w75-inventory button { padding: 9px 13px; border: 1px solid #cadbd8; border-radius: 8px; background: #f6faf8; color: #22545a; cursor: pointer; font-size: 12px; }
+.w75-inventory button:disabled { opacity: .5; cursor: not-allowed; }
+.w75-inventory button:focus-visible, .w75-inventory select:focus-visible { outline: 2px solid #77a993; outline-offset: 2px; }
+.w75-inventory-branch { display: grid; gap: 8px; max-width: 450px; color: #31505a; font-size: 12px; font-weight: 700; }
+.w75-inventory select { min-height: 42px; padding: 10px 12px; border: 1px solid #d4e0e1; border-radius: 8px; color: #203c45; background: #fff; }
+.w75-inventory-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; margin: 20px 0; }
+.w75-inventory-tabs { display: flex; gap: 8px; }
+.w75-inventory-tabs button[aria-pressed='true'] { color: #fff; background: #15525a; border-color: #15525a; }
+.w75-inventory-note, .w75-inventory-empty { color: #647f87; font-size: 12px; line-height: 1.8; }
+.w75-inventory-note button { margin-left: 8px; }
+.w75-inventory-empty { padding: 16px 0; }
+.w75-inventory-error { padding: 12px 16px; border-radius: 9px; border: 1px solid #f0cec7; color: #9b342c; background: #fff0ed; font-size: 12px; line-height: 1.7; }
+.w75-inventory-table-wrap { overflow: auto; border: 1px solid #e5edef; border-radius: 10px; }
+.w75-inventory table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
+.w75-inventory th { padding: 13px 12px; background: #f1f6f4; color: #526d74; text-align: left; }
+.w75-inventory td { padding: 12px; border-top: 1px solid #edf1f2; }
+.w75-inventory td > span { display: block; margin-top: 4px; }
+.w75-inventory-number { text-align: right; font-variant-numeric: tabular-nums; }
+.w75-inventory-id { color: #7c9095; font-family: monospace; font-size: 10px; }
+.w75-inventory-low { color: #a04b25; font-weight: 700; }
+.w75-inventory-tag { color: #85682d; }
+.w75-inventory-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 16px; font-size: 12px; color: #647f87; }
+@media (max-width: 700px) { .w75-inventory-panel { padding: 16px; } .w75-inventory-tabs { flex-wrap: wrap; } }

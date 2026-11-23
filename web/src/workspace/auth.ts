@@ -1,4 +1,5 @@
 /** WaveHouse W1 session adapter. No credentials or tokens are logged. */
+import { ApiError, apiRequest } from './api';
 export type UserRole = 'ADMIN' | 'BRANCH_MANAGER' | 'STAFF';
 
 export type AuthUser = {
@@ -53,72 +54,47 @@ function readUser(payload: unknown): AuthUser {
     };
 }
 
-async function readResponse(response: Response): Promise<unknown> {
-    const content = await response.text();
-    let payload: unknown;
-
-    try {
-        payload = content ? JSON.parse(content) as unknown : null;
-    } catch {
-        payload = null;
-    }
-
-    if (!response.ok) {
-        const details = record(payload);
-        const message = typeof details?.error === 'string' ? details.error : '';
-        if (response.status === 401) {
-            throw new Error('Email hoặc mật khẩu không đúng, hoặc phiên đã hết hạn.');
-        }
-        throw new Error(message || `Máy chủ trả lỗi HTTP ${response.status}.`);
-    }
-
-    return payload;
-}
-
 export async function getCurrentUser(token: string): Promise<AuthUser> {
-    const response = await fetch('/api/auth/me', {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
-        cache: 'no-store',
-    });
-    return readUser(await readResponse(response));
+    return readUser(await apiRequest<unknown>({ token }, '/auth/me'));
 }
 
-export async function signIn(email: string, password: string): Promise<AuthSession> {
-    const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim(), password }),
-    });
-
-    const payload = await readResponse(response);
+export async function signIn(email: string, password: string, expectedUserId?: string,
+    expectedScope?: Pick<AuthUser, 'role' | 'branchId'>): Promise<AuthSession> {
+    let payload: unknown;
+    try {
+        payload = await apiRequest<unknown>({ token: '' }, '/auth/login', { method: 'POST', body: { email: email.trim(), password } });
+    } catch (cause) {
+        if (cause instanceof ApiError && cause.status === 401) throw new Error('Email hoặc mật khẩu không đúng, hoặc tài khoản đã bị vô hiệu hóa.');
+        throw cause;
+    }
     const token = readToken(payload);
     if (!token) throw new Error('Phản hồi đăng nhập thiếu Bearer token.');
 
     const user = await getCurrentUser(token);
+    if (expectedUserId && user.id !== expectedUserId) {
+        throw new Error('Hãy xác thực lại bằng tài khoản đang mở để giữ đúng phạm vi dữ liệu. Đăng xuất trước nếu muốn đổi tài khoản.');
+    }
+    if (expectedScope && (user.role !== expectedScope.role || user.branchId !== expectedScope.branchId)) {
+        throw new Error('Phân quyền hoặc chi nhánh đã thay đổi. Hãy sao lưu dữ liệu đang nhập rồi đăng xuất để mở đúng phạm vi mới.');
+    }
     sessionStorage.setItem(TOKEN_KEY, token);
     return { token, user };
 }
 
 export async function restoreSession(): Promise<AuthSession | null> {
-    const token = sessionStorage.getItem(TOKEN_KEY);
-    if (!token) return null;
-
     try {
+        const token = sessionStorage.getItem(TOKEN_KEY);
+        if (!token) return null;
         return { token, user: await getCurrentUser(token) };
     } catch {
-        sessionStorage.removeItem(TOKEN_KEY);
+        try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* Storage may be unavailable in the browser. */ }
         return null;
     }
 }
 
 export async function signOut(token: string): Promise<void> {
     try {
-        const response = await fetch('/api/auth/logout', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
-        });
-        await readResponse(response);
+        await apiRequest<unknown>({ token }, '/auth/logout', { method: 'POST' });
     } finally {
         sessionStorage.removeItem(TOKEN_KEY);
     }
