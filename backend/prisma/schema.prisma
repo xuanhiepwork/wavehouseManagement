@@ -40,6 +40,11 @@ model Ingredient {
   stockDocumentItems StockDocumentItem[]
   shiftStockCountItems ShiftStockCountItem[]
   transferReceiptItems TransferReceiptItem[]
+  warehouseInventoryBalances WarehouseInventoryBalance[]
+  warehouseInventoryMovements WarehouseInventoryMovement[]
+  warehouseReceiptItems WarehouseReceiptItem[]
+  productionBatchInputs ProductionBatchInput[]
+  productionBatchOutputs ProductionBatchOutput[]
 
   @@index([category, isActive])
   @@map("ingredients")
@@ -191,6 +196,12 @@ model User {
   salesRevisions SalesReportRevision[] @relation("SalesRevisionCreator")
   salesReportEvents SalesReportEvent[]
   salesRecipeEvidenceAttestations SalesRecipeEvidence[]
+  warehouseWorkerAssignments WarehouseWorkerAssignment[]
+  warehouseMovements WarehouseInventoryMovement[] @relation("WarehouseMovementActor")
+  warehouseReceiptsCreated WarehouseReceipt[] @relation("WarehouseReceiptCreator")
+  warehouseReceiptsPosted WarehouseReceipt[] @relation("WarehouseReceiptPoster")
+  productionBatchesCreated ProductionBatch[] @relation("ProductionBatchCreator")
+  productionBatchesPosted ProductionBatch[] @relation("ProductionBatchPoster")
 
   @@index([branchId, isActive])
   @@index([areaId, role, isActive])
@@ -701,4 +712,156 @@ model SalesRecipeEvidence {
   @@index([attestedAt])
   @@index([recipeId])
   @@map("sales_recipe_evidence")
+}
+
+// G3: A central kitchen warehouse is distinct from a retail branch.
+// Production consumes catalog Ingredient input and creates prepared Ingredient output.
+// Every stock mutation is recorded once in an append-only warehouse movement ledger.
+model Warehouse {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      String   @unique @db.VarChar(32)
+  name      String   @db.VarChar(150)
+  address   String?  @db.VarChar(255)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workers    WarehouseWorkerAssignment[]
+  balances   WarehouseInventoryBalance[]
+  movements  WarehouseInventoryMovement[]
+  receipts   WarehouseReceipt[]
+  batches    ProductionBatch[]
+
+  @@map("warehouses")
+}
+
+model WarehouseWorkerAssignment {
+  warehouseId String   @map("warehouse_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([warehouseId, userId])
+  @@index([userId, isActive])
+  @@map("warehouse_worker_assignments")
+}
+
+model WarehouseInventoryBalance {
+  warehouseId  String   @map("warehouse_id") @db.Uuid
+  ingredientId String   @map("ingredient_id") @db.Uuid
+  quantity     Decimal  @default(0) @db.Decimal(18, 6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  warehouse  Warehouse  @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([warehouseId, ingredientId])
+  @@index([ingredientId])
+  @@map("warehouse_inventory_balances")
+}
+
+model WarehouseInventoryMovement {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  warehouseId   String   @map("warehouse_id") @db.Uuid
+  ingredientId  String   @map("ingredient_id") @db.Uuid
+  actorId       String   @map("actor_id") @db.Uuid
+  kind          String   @db.VarChar(24)
+  sourceId      String   @map("source_id") @db.Uuid
+  delta         Decimal  @db.Decimal(18, 6)
+  quantityAfter Decimal  @map("quantity_after") @db.Decimal(18, 6)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  warehouse  Warehouse  @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor      User       @relation("WarehouseMovementActor", fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([kind, sourceId, warehouseId, ingredientId])
+  @@index([warehouseId, createdAt])
+  @@map("warehouse_inventory_movements")
+}
+
+model WarehouseReceipt {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code         String    @unique @db.VarChar(40)
+  warehouseId  String    @map("warehouse_id") @db.Uuid
+  supplierName String?   @map("supplier_name") @db.VarChar(160)
+  note         String?   @db.VarChar(500)
+  status       String    @default("DRAFT") @db.VarChar(16)
+  createdById  String    @map("created_by_id") @db.Uuid
+  postedById   String?   @map("posted_by_id") @db.Uuid
+  postedAt     DateTime? @map("posted_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User @relation("WarehouseReceiptCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  postedBy User? @relation("WarehouseReceiptPoster", fields: [postedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  items WarehouseReceiptItem[]
+
+  @@index([warehouseId, status, createdAt])
+  @@map("warehouse_receipts")
+}
+
+model WarehouseReceiptItem {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiptId    String  @map("receipt_id") @db.Uuid
+  ingredientId String  @map("ingredient_id") @db.Uuid
+  quantity     Decimal @db.Decimal(18, 6)
+  unitCost     Decimal @map("unit_cost") @db.Decimal(18, 4)
+
+  receipt    WarehouseReceipt @relation(fields: [receiptId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient       @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([receiptId, ingredientId])
+  @@map("warehouse_receipt_items")
+}
+
+model ProductionBatch {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String    @unique @db.VarChar(40)
+  warehouseId String    @map("warehouse_id") @db.Uuid
+  note        String?   @db.VarChar(500)
+  status      String    @default("DRAFT") @db.VarChar(16)
+  createdById String    @map("created_by_id") @db.Uuid
+  postedById  String?   @map("posted_by_id") @db.Uuid
+  postedAt    DateTime? @map("posted_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User @relation("ProductionBatchCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  postedBy User? @relation("ProductionBatchPoster", fields: [postedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  inputs  ProductionBatchInput[]
+  outputs ProductionBatchOutput[]
+
+  @@index([warehouseId, status, createdAt])
+  @@map("production_batches")
+}
+
+model ProductionBatchInput {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchId      String  @map("batch_id") @db.Uuid
+  ingredientId String  @map("ingredient_id") @db.Uuid
+  quantity     Decimal @db.Decimal(18, 6)
+
+  batch      ProductionBatch @relation(fields: [batchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient      @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([batchId, ingredientId])
+  @@map("production_batch_inputs")
+}
+
+model ProductionBatchOutput {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchId      String  @map("batch_id") @db.Uuid
+  ingredientId String  @map("ingredient_id") @db.Uuid
+  quantity     Decimal @db.Decimal(18, 6)
+
+  batch      ProductionBatch @relation(fields: [batchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient      @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([batchId, ingredientId])
+  @@map("production_batch_outputs")
 }

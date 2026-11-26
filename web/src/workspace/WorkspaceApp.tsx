@@ -9,6 +9,7 @@ import ManagementPage from './management/ManagementPage';
 import StockDocumentsPage from './stock-documents/StockDocumentsPage';
 import { InventoryPage } from './inventory/InventoryPage';
 import WarehousePage from './warehouse/WarehousePage';
+import KitchenPage from './kitchen/KitchenPage';
 import AIAdvisoryPage from './ai4/AIAdvisoryPage';
 import RecipeEvidencePage from './ai5/RecipeEvidencePage';
 import SchedulingPage from './scheduling/SchedulingPage';
@@ -35,6 +36,7 @@ type Section =
     | 'users'
     | 'scheduling'
     | 'areas'
+    | 'kitchen'
     | 'receipts'
     | 'issues'
     | 'transfers';
@@ -51,6 +53,7 @@ const everyone: UserRole[] = ['ADMIN', 'BRANCH_MANAGER', 'STAFF'];
 const managers: UserRole[] = ['ADMIN', 'BRANCH_MANAGER'];
 
 const navigation: NavItem[] = [
+    { id: 'kitchen', label: 'Kho bếp trung tâm', symbol: '♨', roles: ['ADMIN', 'STAFF'], detail: 'Nhập kho, pha chế và ghi nhận mẻ tại kho trung tâm' },
     { id: 'scheduling', label: 'Lịch làm việc', symbol: '▦', roles: everyone, detail: 'Đăng ký lịch rảnh và phân ca linh hoạt theo khu vực' },
     { id: 'overview', label: 'Tổng quan', symbol: '▦', roles: everyone, detail: 'Các công việc cần thực hiện theo vai trò' },
     { id: 'shift', label: 'Chốt ca & kiểm kê', symbol: '▤', roles: everyone, detail: 'Nhập nguyên liệu còn lại cuối ca, gửi và duyệt kiểm kê (B6)' },
@@ -71,10 +74,10 @@ const navigation: NavItem[] = [
     { id: 'users', label: 'Tài khoản nhân viên', symbol: '♙', roles: ['ADMIN'], detail: 'Quản lý nhân sự và phân quyền B1' },
 ];
 
-function roleName(role: UserRole): string {
+function roleName(role: UserRole, workKind?: string): string {
     if (role === 'ADMIN') return 'Quản trị hệ thống';
     if (role === 'BRANCH_MANAGER') return 'Quản lý khu vực';
-    return 'Nhân viên quầy';
+    return workKind === 'KITCHEN_DELIVERY' ? 'Nhân viên kho/giao hàng' : 'Nhân viên quầy';
 }
 
 function StartingPage({ role, onOpen }: { role: UserRole; onOpen: (section: Section) => void }) {
@@ -193,7 +196,8 @@ export default function WorkspaceApp() {
     function navigate(section: Section): boolean {
         if (!session || forms.working || logoutLock.current || !navigation.some(item => item.id === section && item.roles.includes(session.user.role) &&
             !(session.user.role === 'STAFF' && session.user.workKind === 'KITCHEN_DELIVERY' &&
-            ['sales', 'reconciliation', 'scheduling', 'shift'].includes(item.id)))) return false;
+            ['sales', 'reconciliation', 'scheduling', 'shift'].includes(item.id)) &&
+            !(session.user.role === 'STAFF' && session.user.workKind !== 'KITCHEN_DELIVERY' && item.id === 'kitchen'))) return false;
         setActive(section);
         setVisited(previous => new Set(previous).add(section));
         if (section === 'planning' || section === 'delivery') setWarehouseMode(section);
@@ -208,7 +212,8 @@ export default function WorkspaceApp() {
 
     const isCentralStaff = session.user.role === 'STAFF' && session.user.workKind === 'KITCHEN_DELIVERY';
     const allowed = navigation.filter(item => item.roles.includes(session.user.role) &&
-        !(isCentralStaff && ['sales', 'reconciliation', 'scheduling', 'shift'].includes(item.id)));
+        !(isCentralStaff && ['sales', 'reconciliation', 'scheduling', 'shift'].includes(item.id)) &&
+        !(session.user.role === 'STAFF' && !isCentralStaff && item.id === 'kitchen'));
     const selected = allowed.find(item => item.id === active) ?? allowed[0];
     async function logout() {
         if (logoutLock.current || forms.working || (forms.dirty && !window.confirm('Có dữ liệu chưa lưu hoặc kết quả ghi cần đối chiếu. Đăng xuất sẽ đóng các biểu mẫu đang mở. Bạn đã lưu/sao lưu và muốn đăng xuất?'))) return;
@@ -239,7 +244,7 @@ export default function WorkspaceApp() {
             <header className="wh-topbar">
                 <div><p className="wh-eyebrow">WAVEHOUSE / VẬN HÀNH</p><h1>{selected.label}</h1></div>
                 <div className="wh-account"><span className="wh-avatar">{(session.user.displayName || session.user.email || 'W').slice(0, 1).toUpperCase()}</span>
-                    <div><strong>{session.user.displayName || session.user.email}</strong><small>{roleName(session.user.role)}</small></div>
+                    <div><strong>{session.user.displayName || session.user.email}</strong><small>{roleName(session.user.role, session.user.workKind)}</small></div>
                     <button type="button" disabled={loggingOut || forms.working} onClick={() => { void logout(); }} className="wh-logout">{loggingOut ? 'Đang đăng xuất…' : 'Đăng xuất'}</button></div>
             </header>
             <main className="wh-content">
@@ -252,9 +257,11 @@ export default function WorkspaceApp() {
                             mode={selected.id === 'reconciliation' ? 'reconciliation' : 'sales'}
                             onUnsavedChange={forms.callbacks.sales.onDirtyChange} onWorkingChange={forms.callbacks.sales.onWorkingChange} />
                     </div>}
-                    {selected.id === 'overview' && (session.user.role === 'STAFF'
-                        ? <StartingPage role={session.user.role} onOpen={navigate} />
+                    {selected.id === 'overview' && (isCentralStaff
+                        ? <section className="wh-kitchen-card"><h2>Công việc tại kho trung tâm</h2><p>Nhập nguyên liệu, chuẩn bị mẻ và ghi sổ tồn kho.</p><button className="wh-primary" type="button" onClick={() => navigate('kitchen')}>Mở kho bếp trung tâm</button></section>
+                        : session.user.role === 'STAFF' ? <StartingPage role={session.user.role} onOpen={navigate} />
                         : <AreaDashboard session={session} onNavigate={navigate} />)}
+                    {visited.has('kitchen') && <div hidden={selected.id !== 'kitchen'}><KitchenPage session={session} /></div>}
                     {visited.has('scheduling') && <div hidden={selected.id !== 'scheduling'}><SchedulingPage session={session} /></div>}
                     {visited.has('shift') && <div hidden={selected.id !== 'shift'}><ShiftStockCountPage session={session} {...forms.callbacks.shift} /></div>}
                     {visited.has('receiving') && <div hidden={selected.id !== 'receiving'}><ReceivingPage session={session} initialTransferId={receivingId} initialRequest={receivingRequest}
