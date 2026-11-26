@@ -45,6 +45,7 @@ model Ingredient {
   warehouseReceiptItems WarehouseReceiptItem[]
   productionBatchInputs ProductionBatchInput[]
   productionBatchOutputs ProductionBatchOutput[]
+  deliveryStopItems DeliveryStopItem[]
 
   @@index([category, isActive])
   @@map("ingredients")
@@ -157,6 +158,7 @@ model Branch {
   shiftStockCounts ShiftStockCount[]
   salesReports SalesReport[]
   shiftAssignments ShiftAssignment[]
+  deliveryStops DeliveryStop[]
 
   @@index([areaId])
   @@map("branches")
@@ -202,6 +204,10 @@ model User {
   warehouseReceiptsPosted WarehouseReceipt[] @relation("WarehouseReceiptPoster")
   productionBatchesCreated ProductionBatch[] @relation("ProductionBatchCreator")
   productionBatchesPosted ProductionBatch[] @relation("ProductionBatchPoster")
+  deliveryTripsCreated DeliveryTrip[] @relation("DeliveryTripCreator")
+  deliveryTripsCourier DeliveryTrip[] @relation("DeliveryTripCourier")
+  deliveryTripsDispatched DeliveryTrip[] @relation("DeliveryTripDispatcher")
+  deliveryStopsReceived DeliveryStop[] @relation("DeliveryStopReceiver")
 
   @@index([branchId, isActive])
   @@index([areaId, role, isActive])
@@ -731,6 +737,7 @@ model Warehouse {
   movements  WarehouseInventoryMovement[]
   receipts   WarehouseReceipt[]
   batches    ProductionBatch[]
+  deliveryTrips DeliveryTrip[]
 
   @@map("warehouses")
 }
@@ -864,4 +871,68 @@ model ProductionBatchOutput {
 
   @@unique([batchId, ingredientId])
   @@map("production_batch_outputs")
+}
+
+// G4: morning distribution from a central kitchen to several branches.
+// Warehouse decreases at dispatch. Each branch increases ONLY after physical confirmation.
+model DeliveryTrip {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code         String    @unique @db.VarChar(40)
+  warehouseId  String    @map("warehouse_id") @db.Uuid
+  businessDate DateTime  @map("business_date") @db.Date
+  status       String    @default("DRAFT") @db.VarChar(16)
+  courierId    String?   @map("courier_id") @db.Uuid
+  note         String?   @db.VarChar(500)
+  createdById  String    @map("created_by_id") @db.Uuid
+  dispatchedById String? @map("dispatched_by_id") @db.Uuid
+  dispatchedAt DateTime? @map("dispatched_at") @db.Timestamptz(6)
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz(6)
+  receivedStops Int      @default(0) @map("received_stops")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  warehouse    Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  courier      User? @relation("DeliveryTripCourier", fields: [courierId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy    User @relation("DeliveryTripCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  dispatchedBy User? @relation("DeliveryTripDispatcher", fields: [dispatchedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  stops        DeliveryStop[]
+
+  @@index([warehouseId, businessDate, status])
+  @@index([courierId, businessDate])
+  @@map("delivery_trips")
+}
+
+model DeliveryStop {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tripId        String    @map("trip_id") @db.Uuid
+  branchId      String    @map("branch_id") @db.Uuid
+  stopOrder     Int       @map("stop_order")
+  status        String    @default("PLANNED") @db.VarChar(16)
+  note          String?   @db.VarChar(500)
+  receivedById  String?   @map("received_by_id") @db.Uuid
+  receivedAt    DateTime? @map("received_at") @db.Timestamptz(6)
+
+  trip       DeliveryTrip @relation(fields: [tripId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  branch     Branch @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  receivedBy User? @relation("DeliveryStopReceiver", fields: [receivedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  items      DeliveryStopItem[]
+
+  @@unique([tripId, branchId])
+  @@unique([tripId, stopOrder])
+  @@index([branchId, status])
+  @@map("delivery_stops")
+}
+
+model DeliveryStopItem {
+  stopId           String   @map("stop_id") @db.Uuid
+  ingredientId     String   @map("ingredient_id") @db.Uuid
+  plannedQuantity  Decimal  @map("planned_quantity") @db.Decimal(18, 6)
+  receivedQuantity Decimal? @map("received_quantity") @db.Decimal(18, 6)
+  damagedQuantity  Decimal? @map("damaged_quantity") @db.Decimal(18, 6)
+
+  stop       DeliveryStop @relation(fields: [stopId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([stopId, ingredientId])
+  @@index([ingredientId])
+  @@map("delivery_stop_items")
 }

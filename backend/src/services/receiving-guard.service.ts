@@ -48,6 +48,18 @@ export async function assertNoPendingReceipts(tx: Prisma.TransactionClient, bran
             'PENDING_TRANSFER_RECEIPTS'
         );
     }
+    // G4: kitchen distribution trips are separate from branch-to-branch transfers.
+    // Prevent signing off a shift count while kitchen deliveries have not been physically received.
+    const pendingDistribution = await tx.deliveryStop.findFirst({
+        where: { branchId, status: 'DISPATCHED', trip: { status: 'IN_TRANSIT' } },
+        select: { id: true },
+    });
+    if (pendingDistribution) {
+        throw new ReceivingGuardError(
+            'Kitchen delivery is waiting for physical receipt. Confirm delivery before closing this shift.',
+            'PENDING_KITCHEN_DELIVERY'
+        );
+    }
 }
 
 export async function captureReceivingRevision(tx: Prisma.TransactionClient, branchId: string): Promise<number> {

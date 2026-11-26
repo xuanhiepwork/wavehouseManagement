@@ -28,6 +28,7 @@ import { createDashboardRouter } from './routes/dashboard.routes';
 import { createAreasRouter } from './routes/areas.routes';
 import { createSchedulingRouter } from './routes/scheduling.routes';
 import { createKitchenRouter } from './routes/kitchen.routes';
+import { createDistributionRouter } from './routes/distribution.routes';
 import { createOperationalBranchRouter } from './routes/operational-branches.routes';
 
 // Explicit paths keep documentation working after TypeScript sources are compiled.
@@ -147,6 +148,7 @@ export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = ()
         app.use('/api/areas', guards.requireAuth, createAreasRouter(options.authPrisma));
         app.use('/api/scheduling', guards.requireAuth, createSchedulingRouter(options.authPrisma));
         app.use('/api/kitchen', guards.requireAuth, createKitchenRouter(options.authPrisma));
+        app.use('/api/distribution', guards.requireAuth, createDistributionRouter(options.authPrisma));
         app.use('/api/operational-branches', guards.requireAuth, createOperationalBranchRouter(options.authPrisma));
 
         app.use(

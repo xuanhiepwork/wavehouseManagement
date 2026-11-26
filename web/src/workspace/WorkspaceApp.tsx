@@ -10,6 +10,7 @@ import StockDocumentsPage from './stock-documents/StockDocumentsPage';
 import { InventoryPage } from './inventory/InventoryPage';
 import WarehousePage from './warehouse/WarehousePage';
 import KitchenPage from './kitchen/KitchenPage';
+import DistributionPage from './distribution/DistributionPage';
 import AIAdvisoryPage from './ai4/AIAdvisoryPage';
 import RecipeEvidencePage from './ai5/RecipeEvidencePage';
 import SchedulingPage from './scheduling/SchedulingPage';
@@ -64,7 +65,7 @@ const navigation: NavItem[] = [
     { id: 'receipts', label: 'Nhập hàng nhà cung cấp', symbol: '↓', roles: everyone, detail: 'Phiếu nhập hàng B4' },
     { id: 'issues', label: 'Xuất kho', symbol: '↑', roles: everyone, detail: 'Phiếu xuất kho B5' },
     { id: 'transfers', label: 'Chuyển kho', symbol: '⇄', roles: everyone, detail: 'Phiếu chuyển kho và tình trạng nhận hàng' },
-    { id: 'delivery', label: 'Điều phối giao hàng', symbol: '↗', roles: ['ADMIN'], detail: 'Lập danh sách hàng cần giao và theo dõi giao nhận' },
+    { id: 'delivery', label: 'Điều phối giao hàng', symbol: '↗', roles: everyone, detail: 'Giao hàng từ kho trung tâm đến các quầy và xác nhận thực nhận' },
     { id: 'planning', label: 'Đề xuất bổ sung', symbol: '▥', roles: ['ADMIN'], detail: 'Dự báo theo chi nhánh, ca và loại ngày (B7)' },
     { id: 'ai-forecast', label: 'Dự báo AI', symbol: '✦', roles: ['ADMIN'], detail: 'So sánh AI2 và B7, khoảng bất định và cảnh báo dữ liệu' },
     { id: 'ai-evidence', label: 'Bằng chứng công thức AI', symbol: '✓', roles: ['ADMIN'], detail: 'Xác nhận công thức lịch sử cho báo cáo bán hàng đã duyệt' },
@@ -262,6 +263,7 @@ export default function WorkspaceApp() {
                         : session.user.role === 'STAFF' ? <StartingPage role={session.user.role} onOpen={navigate} />
                         : <AreaDashboard session={session} onNavigate={navigate} />)}
                     {visited.has('kitchen') && <div hidden={selected.id !== 'kitchen'}><KitchenPage session={session} /></div>}
+                    {visited.has('delivery') && <div hidden={selected.id !== 'delivery'}><DistributionPage session={session} /></div>}
                     {visited.has('scheduling') && <div hidden={selected.id !== 'scheduling'}><SchedulingPage session={session} /></div>}
                     {visited.has('shift') && <div hidden={selected.id !== 'shift'}><ShiftStockCountPage session={session} {...forms.callbacks.shift} /></div>}
                     {visited.has('receiving') && <div hidden={selected.id !== 'receiving'}><ReceivingPage session={session} initialTransferId={receivingId} initialRequest={receivingRequest}
@@ -275,7 +277,7 @@ export default function WorkspaceApp() {
                         </div>;
                     })}
                     {session.user.role === 'ADMIN' && <>
-                        {(visited.has('planning') || visited.has('delivery')) && <div hidden={selected.id !== 'planning' && selected.id !== 'delivery'}>
+                        {visited.has('planning') && <div hidden={selected.id !== 'planning'}>
                             <WarehousePage session={session} mode={warehouseMode} plan={plan} onPlanChange={setPlan} {...forms.callbacks.warehouse}
                                 onOpenTransfer={openTransfer} onOpenPlanning={() => navigate('planning')} />
                         </div>}
