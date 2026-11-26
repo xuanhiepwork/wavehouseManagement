@@ -19,10 +19,6 @@ export type DeliveryTrip = {
     warehouse: { code: string; name: string }; courier: { displayName: string } | null;
     stops: DeliveryStop[];
 };
-export type CreateDeliveryTrip = {
-    code: string; warehouseId: string; businessDate: string; courierId: string | null; note: string;
-    stops: { branchId: string; items: { ingredientId: string; quantity: string }[] }[];
-};
 export type ReceiveDeliveryStop = {
     items: { ingredientId: string; receivedQuantity: string; damagedQuantity: string }[];
     note: string;
@@ -35,8 +31,6 @@ export const distributionApi = {
         apiRequest<{ items: DeliveryTrip[] }>(session, `/distribution/trips?date=${enc(date)}`),
     trip: (session: AuthSession, id: string) =>
         apiRequest<{ data: DeliveryTrip }>(session, `/distribution/trips/${enc(id)}`),
-    create: (session: AuthSession, body: CreateDeliveryTrip) =>
-        apiRequest<{ data: DeliveryTrip }>(session, '/distribution/trips', { method: 'POST', body }),
     dispatch: (session: AuthSession, id: string) =>
         apiRequest<{ data: DeliveryTrip }>(session, `/distribution/trips/${enc(id)}/dispatch`, { method: 'POST' }),
     receive: (session: AuthSession, id: string, body: ReceiveDeliveryStop) =>

@@ -83,7 +83,8 @@ export default function DispatchTransfersPanel(props: Props) {
     const [notice, setNotice] = useState('');
     const [busy, setBusy] = useState(false);
     const lock = useRef(false);
-    const batchRef = useRef(batch); batchRef.current = batch;
+    const batchRef = useRef(batch);
+    useEffect(() => { batchRef.current = batch; }, [batch]);
     const preview = useMemo(() => {
         if (!plan) return { groups: [] as [string, DispatchLine[]][], error: 'Tải và kiểm tra đề xuất B7 trước khi bắt đầu bộ phiếu mới. Bộ mã đã lưu vẫn có thể được đối chiếu mà không cần tải lại kế hoạch.' };
         try {

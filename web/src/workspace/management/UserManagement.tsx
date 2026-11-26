@@ -4,7 +4,8 @@ import {
     createUser, getUser, listUsers, loadBranchOptions, resetPassword, updateUser,
     type BranchRecord, type Page, type UserChanges, type UserFilters, type UserRecord,
 } from './management.api';
-import { errorMessage, mayDiscard, Pagination, timestamp, useManagementActivity, type ActivityProps } from './management.shared';
+import { Pagination } from './management.shared';
+import { errorMessage, mayDiscard, timestamp, useManagementActivity, type ActivityProps } from './management.utils';
 
 type Props = ActivityProps & { session: AuthSession };
 type Form = { email: string; displayName: string; role: UserRole; branchId: string; isActive: boolean; password: string };
@@ -22,7 +23,7 @@ export default function UserManagement({ session, ...activity }: Props) {
     const [form, setForm] = useState<Form>(emptyForm);
     const [baseline, setBaseline] = useState(JSON.stringify(emptyForm()));
     const [passwordReset, setPasswordReset] = useState('');
-    const [busy, setBusy] = useState(false);
+    const [busy, setBusy] = useState(true);
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
     const lock = useRef(false);
@@ -33,7 +34,7 @@ export default function UserManagement({ session, ...activity }: Props) {
 
     useEffect(() => {
         let active = true;
-        lock.current = true; setBusy(true);
+        lock.current = true;
         void Promise.allSettled([listUsers(session, 1, emptyFilters()), loadBranchOptions(session)]).then(results => {
             if (!active) return;
             const [users, options] = results;

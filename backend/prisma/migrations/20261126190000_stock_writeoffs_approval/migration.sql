@@ -45,3 +45,11 @@ GRANT SELECT, INSERT, UPDATE ON public.stock_writeoffs TO wavehouse_app;
 GRANT SELECT, INSERT ON public.stock_writeoff_items TO wavehouse_app;
 GRANT SELECT, INSERT ON public.stock_writeoff_events TO wavehouse_app;
 -- Existing inventory balance and movement permissions are managed in G0-G4.
+
+-- G11 pre-deployment compatibility fix: allow approved kitchen warehouse write-offs.
+-- G4 enabled DISTRIBUTION. G8 service records warehouse WRITE_OFF movements.
+ALTER TABLE public.warehouse_inventory_movements
+    DROP CONSTRAINT warehouse_inventory_movements_kind_check;
+ALTER TABLE public.warehouse_inventory_movements
+    ADD CONSTRAINT warehouse_inventory_movements_kind_check
+    CHECK (kind IN ('RECEIPT','PRODUCTION_INPUT','PRODUCTION_OUTPUT','DISTRIBUTION','WRITE_OFF'));

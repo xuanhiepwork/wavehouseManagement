@@ -45,7 +45,7 @@ const caseSelect = {
         id: true, action: true, note: true, createdAt: true,
         actor: { select: { displayName: true } },
     } },
-} as const;
+} satisfies Prisma.DeliveryDiscrepancySelect;
 export async function listDeliveryDiscrepancies(db: PrismaClient, actor: DistributionActor,
     businessDate: string, status?: string) {
     const current = await scope(db, actor);
@@ -71,6 +71,7 @@ export async function resolveDeliveryDiscrepancy(db: PrismaClient, actor: Distri
         !allowed.includes(body.classification as typeof allowed[number]) ||
         typeof body.note !== 'string' || body.note.trim().length < 10 || body.note.trim().length > 500)
         throw new DiscrepancyError('Cần phân loại và giải trình ít nhất 10 ký tự.', 400);
+    const resolutionNote = body.note;
     return db.$transaction(async tx => {
         const current = await scope(tx, actor);
         const found = await tx.deliveryDiscrepancy.findUnique({ where: { id: uuid(caseId) },
@@ -82,11 +83,11 @@ export async function resolveDeliveryDiscrepancy(db: PrismaClient, actor: Distri
             throw new DiscrepancyError('Người xác nhận nhận hàng không được tự kết luận chênh lệch.', 403);
         const changed = await tx.deliveryDiscrepancy.updateMany({ where: { id: caseId, status: 'OPEN' }, data: {
             status: 'RESOLVED', classification: body.classification as typeof allowed[number],
-            resolutionNote: body.note.trim(), resolvedById: actor.id, resolvedAt: new Date(),
+            resolutionNote: resolutionNote.trim(), resolvedById: actor.id, resolvedAt: new Date(),
         } });
         if (changed.count !== 1) throw new DiscrepancyError('Hồ sơ đã được xử lý, hãy tải lại.', 409);
         await tx.deliveryDiscrepancyEvent.create({ data: {
-            discrepancyId: caseId, actorId: actor.id, action: 'RESOLVED', note: body.note.trim(),
+            discrepancyId: caseId, actorId: actor.id, action: 'RESOLVED', note: resolutionNote.trim(),
         } });
         return tx.deliveryDiscrepancy.findUniqueOrThrow({ where: { id: caseId }, select: caseSelect });
     }, txOpts);

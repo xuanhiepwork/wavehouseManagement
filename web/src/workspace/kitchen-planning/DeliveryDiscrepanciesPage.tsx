@@ -28,7 +28,7 @@ export default function DeliveryDiscrepanciesPage({ session }:{session:AuthSessi
         const data = await deliveryDiscrepancyApi.list(session,day);
         setItems(data.items);
     },[session,day]);
-    useEffect(()=>{ void refresh().catch(e=>setError(e instanceof Error?e.message:'Không tải được hồ sơ.')); },[refresh]);
+    useEffect(()=>{ void Promise.resolve().then(() => refresh()).catch(e=>setError(e instanceof Error?e.message:'Không tải được hồ sơ.')); },[refresh]);
     async function resolve(id:string) {
         if (lock.current || uncertain || note.trim().length<10) {setError('Cần giải trình từ 10 ký tự.');return;}
         if (!window.confirm('Kết luận hồ sơ chênh lệch? Thao tác không điều chỉnh tồn kho và không thể hoàn tác.')) return;

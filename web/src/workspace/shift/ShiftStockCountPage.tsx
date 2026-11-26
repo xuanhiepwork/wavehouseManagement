@@ -122,11 +122,14 @@ export default function ShiftStockCountPage({ session, onDirtyChange, onWorkingC
     const [version, setVersion] = useState(0);
     const [dirty, setDirty] = useState(false);
     const [recoveryNeeded, setRecoveryNeeded] = useState(false);
-    const sessionRef = useRef(session); sessionRef.current = session;
-    const dirtyRef = useRef(dirty); dirtyRef.current = dirty;
+    const sessionRef = useRef(session);
+    const dirtyRef = useRef(dirty);
     const actionLock = useRef(false);
     const alive = useRef(true);
-    const callbacks = useRef({ onDirtyChange, onWorkingChange }); callbacks.current = { onDirtyChange, onWorkingChange };
+    const callbacks = useRef({ onDirtyChange, onWorkingChange });
+    useEffect(() => { sessionRef.current = session; }, [session]);
+    useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
+    useEffect(() => { callbacks.current = { onDirtyChange, onWorkingChange }; }, [onDirtyChange, onWorkingChange]);
     const loadedScope = useRef('');
     const sessionScope = JSON.stringify([session.user.id, session.user.role, session.user.branchId, session.user.areaId]);
 
@@ -160,25 +163,28 @@ export default function ShiftStockCountPage({ session, onDirtyChange, onWorkingC
 
     useEffect(() => {
         const scope = JSON.stringify([sessionScope, branchId, businessDate, shift]);
-        if (loadedScope.current !== scope) {
-            loadedScope.current = scope;
-            setCount(null); setItems([]); setNote(''); setFilter(''); setReturnReason('');
-            setDirty(false); setRecoveryNeeded(false); setSuccess('');
-        }
-        if (!UUID_PATTERN.test(branchId)) {
-            setError('Hãy chọn chi nhánh hợp lệ để tải danh sách kiểm kê.');
-            setLoading(false);
-            return;
-        }
-
         let active = true;
-        setLoading(true);
-        setError('');
-
-        void Promise.all([
-            loadTemplate(sessionRef.current, branchId, businessDate, shift),
-            listCounts(sessionRef.current, branchId, { businessDate, shift }),
-        ]).then(async ([template, counts]) => {
+        void Promise.resolve().then(() => {
+            if (!active) return null;
+            if (loadedScope.current !== scope) {
+                loadedScope.current = scope;
+                setCount(null); setItems([]); setNote(''); setFilter(''); setReturnReason('');
+                setDirty(false); setRecoveryNeeded(false); setSuccess('');
+            }
+            if (!UUID_PATTERN.test(branchId)) {
+                setError('Hãy chọn chi nhánh hợp lệ để tải danh sách kiểm kê.');
+                setLoading(false);
+                return null;
+            }
+            setLoading(true);
+            setError('');
+            return Promise.all([
+                loadTemplate(sessionRef.current, branchId, businessDate, shift),
+                listCounts(sessionRef.current, branchId, { businessDate, shift }),
+            ]);
+        }).then(async results => {
+            if (!results || !active) return;
+            const [template, counts] = results;
             const match = counts.find(row => row.branchId === branchId
                 && row.businessDate === businessDate && row.shift === shift);
             const selected = match ? await getCount(sessionRef.current, match.id) : null;

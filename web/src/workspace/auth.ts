@@ -68,7 +68,7 @@ export async function signIn(email: string, password: string, expectedUserId?: s
     try {
         payload = await apiRequest<unknown>({ token: '' }, '/auth/login', { method: 'POST', body: { email: email.trim(), password } });
     } catch (cause) {
-        if (cause instanceof ApiError && cause.status === 401) throw new Error('Email hoặc mật khẩu không đúng, hoặc tài khoản đã bị vô hiệu hóa.');
+        if (cause instanceof ApiError && cause.status === 401) throw new Error('Email hoặc mật khẩu không đúng, hoặc tài khoản đã bị vô hiệu hóa.', { cause });
         throw cause;
     }
     const token = readToken(payload);

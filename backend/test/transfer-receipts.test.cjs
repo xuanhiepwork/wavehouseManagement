@@ -9,7 +9,10 @@ const { captureReceivingRevision, assertReceivingRevision, captureStockCountRevi
 
 function fixture() {
     const destination = randomUUID(), source = randomUUID(), ingredientId = randomUUID();
-    const actor = { id: randomUUID(), role: 'STAFF', branchId: destination };
+    // G2/G4 resolves today's destination assignment in the route before invoking this service.
+    // A legacy branchId by itself is no longer a grant for receiving.
+    const actor = { id: randomUUID(), role: 'STAFF', branchId: destination,
+        permittedReceivingBranchIds: [destination] };
     const transfer = {
         id: randomUUID(), code: 'TR-W72-UNIT', type: 'TRANSFER', status: 'POSTED',
         legacyReceivingRequired: false,
@@ -18,7 +21,7 @@ function fixture() {
         destinationBranch: { id: destination, code: 'DEST', name: 'Destination fixture', isActive: true },
         items: [{ ingredientId, quantity: new Prisma.Decimal(10), ingredient: { code: 'I-UNIT', name: 'Fixture ingredient', unit: 'piece' } }],
     };
-    let receipt = null, revision = 0, inventoryRevision = 0, pending = false, casFailure = false;
+    let receipt = null, revision = 0, inventoryRevision = 0, pending = false, kitchenPending = false, casFailure = false;
     const writes = [];
     const inventoryTrap = new Proxy({}, { get() { throw new Error('Receiving must never call inventory persistence'); } });
     const tx = {
@@ -38,10 +41,25 @@ function fixture() {
                     assert.deepEqual(where.OR, [{ transferReceipt: { is: null } }, { transferReceipt: { is: { status: 'DRAFT' } } }]);
                     return pending || (transfer.legacyReceivingRequired && receipt?.status !== 'CONFIRMED') ? { id: transfer.id } : null;
                 }
-                if (where.destinationBranchId !== undefined && where.destinationBranchId !== destination) return null;
+                // Receiving service now supplies an allowlist (Prisma { in: [...] }) rather
+                // than relying on the single fixed branchId on the user session.
+                if (where.destinationBranchId !== undefined) {
+                    const scope = where.destinationBranchId;
+                    const canSeeDestination = typeof scope === 'string'
+                        ? scope === destination
+                        : Array.isArray(scope?.in) && scope.in.includes(destination);
+                    if (!canSeeDestination) return null;
+                }
                 return where.id === transfer.id ? transfer : null;
             },
         },
+        // G4 adds an independent pending-kitchen-delivery barrier to B6 shift counts.
+        deliveryStop: { findFirst: async ({ where }) => {
+            assert.equal(where.branchId, destination);
+            assert.equal(where.status, 'DISPATCHED');
+            assert.deepEqual(where.trip, { status: 'IN_TRANSIT' });
+            return kitchenPending ? { id: randomUUID() } : null;
+        } },
         branch: { update: async ({ where, data }) => {
             assert.equal(where.id, destination);
             assert.deepEqual(data, { receivingRevision: { increment: 1 } });
@@ -84,7 +102,8 @@ function fixture() {
     }, 'create');
     return { actor, transfer, input, tx, writes, service: createTransferReceiptService(db),
         get receipt() { return receipt; }, get revision() { return revision; },
-        set pending(value) { pending = value; }, set casFailure(value) { casFailure = value; },
+        set pending(value) { pending = value; }, set kitchenPending(value) { kitchenPending = value; },
+        set casFailure(value) { casFailure = value; },
         set inventoryRevision(value) { inventoryRevision = value; } };
 }
 
@@ -138,7 +157,10 @@ test('overage is distinct from damage and never creates inventory movements', as
 
 test('STAFF cannot read a source-only/foreign destination transfer and cannot override list scope', async () => {
     const f = fixture();
-    await assert.rejects(f.service.get({ ...f.actor, branchId: f.transfer.sourceBranchId }, f.transfer.id), error => error.status === 404);
+    await assert.rejects(f.service.get({ ...f.actor, branchId: f.transfer.sourceBranchId,
+        permittedReceivingBranchIds: [f.transfer.sourceBranchId] }, f.transfer.id), error => error.status === 404);
+    // Merely spoofing a legacy branchId must not widen an actor's assigned allowlist.
+    assert.equal((await f.service.get({ ...f.actor, branchId: f.transfer.sourceBranchId }, f.transfer.id)).transfer.id, f.transfer.id);
     await assert.rejects(f.service.list(f.actor, { page: 1, destinationBranchId: f.transfer.sourceBranchId }), error => error.status === 403);
 });
 
@@ -249,6 +271,16 @@ test('B6 inventory revision rejects offsetting movements independently of time a
         error => error.code === 'INVENTORY_SNAPSHOT_CHANGED');
     await assert.rejects(assertStockCountRevisions(f.tx, f.actor.branchId, snapshot.receivingRevision, null),
         error => error.code === 'INVENTORY_SNAPSHOT_CHANGED');
+});
+
+test('G4 pending kitchen deliveries block shift-count snapshots before a count can be signed', async () => {
+    const f = fixture();
+    f.kitchenPending = true;
+    await assert.rejects(captureStockCountRevisions(f.tx, f.actor.branchId),
+        error => error.code === 'PENDING_KITCHEN_DELIVERY');
+    f.kitchenPending = false;
+    assert.deepEqual(await captureStockCountRevisions(f.tx, f.actor.branchId),
+        { receivingRevision: 0, inventoryRevision: 0 });
 });
 
 test('multi-branch barriers acquire unique branches in stable ID order', async () => {

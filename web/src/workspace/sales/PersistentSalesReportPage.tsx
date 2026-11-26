@@ -151,8 +151,10 @@ export default function PersistentSalesReportPage({ session, mode, onUnsavedChan
     const actionLock = useRef(false);
     const historySequence = useRef(0);
     const dirty = JSON.stringify(form) !== baseline || unallocatedRefunds !== null;
-    const dirtyRef = useRef(dirty); dirtyRef.current = dirty;
-    const callbacks = useRef({ onUnsavedChange, onWorkingChange }); callbacks.current = { onUnsavedChange, onWorkingChange };
+    const dirtyRef = useRef(dirty);
+    const callbacks = useRef({ onUnsavedChange, onWorkingChange });
+    useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
+    useEffect(() => { callbacks.current = { onUnsavedChange, onWorkingChange }; }, [onUnsavedChange, onWorkingChange]);
     const editable = !report || report.allowedActions.canEdit;
     const productMap = useMemo(() => new Map(products.map(p => [p._id, p])), [products]);
 
@@ -160,41 +162,55 @@ export default function PersistentSalesReportPage({ session, mode, onUnsavedChan
         alive.current = true;
         const beforeUnload = (event: BeforeUnloadEvent) => { if (dirtyRef.current || actionLock.current) { event.preventDefault(); event.returnValue = ''; } };
         window.addEventListener('beforeunload', beforeUnload);
-        return () => { alive.current = false; historySequence.current++; window.removeEventListener('beforeunload', beforeUnload);
+        const invalidateHistoryRequests = () => { historySequence.current += 1; };
+        return () => { alive.current = false; invalidateHistoryRequests(); window.removeEventListener('beforeunload', beforeUnload);
             callbacks.current.onUnsavedChange?.(false); callbacks.current.onWorkingChange?.(false); };
     }, []);
     useEffect(() => { callbacks.current.onUnsavedChange?.(dirty); }, [dirty]);
     useEffect(() => { callbacks.current.onWorkingChange?.(working); }, [working]);
     useEffect(() => {
         let cancelled = false;
-        setCatalogLoading(true); setCatalogError(''); setBranchError('');
-        void api.products().then(data => { if (!cancelled) setProducts(data); }).catch(cause => { if (!cancelled) setCatalogError(errorText(cause)); })
+        void Promise.resolve().then(() => {
+            if (cancelled) return null;
+            setCatalogLoading(true); setCatalogError(''); setBranchError('');
+            return api.products();
+        }).then(data => { if (!cancelled && data) setProducts(data); }).catch(cause => { if (!cancelled) setCatalogError(errorText(cause)); })
             .finally(() => { if (!cancelled) setCatalogLoading(false); });
         return () => { cancelled = true; };
     }, [api, catalogRetry]);
+    const reportId = report?.id ?? null;
     useEffect(() => {
         let cancelled = false;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(form.businessDate)) return;
-        setContextLoading(true); setBranchError('');
-        void api.workContext(form.businessDate).then(context => {
+        void Promise.resolve().then(() => {
+            if (cancelled) return null;
+            setContextLoading(true); setBranchError('');
+            return api.workContext(form.businessDate);
+        }).then(context => {
+            if (!context) return;
             if (cancelled) return;
             setBranches(context.branches);
             setAssignedShifts(context.assignments);
-            if (isSalesStaff) setForm(previous => report ? previous : ({ ...previous,
+            if (isSalesStaff) setForm(previous => reportId ? previous : ({ ...previous,
                 branchId: context.assignments.find(item => item.shift === previous.shift)?.branchId ?? '',
             }));
         }).catch(cause => { if (!cancelled) {
             setAssignedShifts([]); setBranches([]); setBranchError(errorText(cause));
         } }).finally(() => { if (!cancelled) setContextLoading(false); });
         return () => { cancelled = true; };
-    }, [api, form.businessDate, isSalesStaff, report?.id, catalogRetry]);
+    }, [api, form.businessDate, isSalesStaff, reportId, catalogRetry]);
     useEffect(() => {
         let cancelled = false;
-        setListLoading(true); setListError('');
-        if (filters.from && filters.to && filters.from > filters.to) { setListError('Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.'); setListLoading(false); return; }
-        const query: Record<string, string | number> = { page: filters.page };
-        for (const [key, value] of Object.entries(filters)) if (key !== 'page' && value !== '') query[key] = value;
-        void api.list(query).then(result => { if (!cancelled) { setItems(result.items); setTotal(result.total); } })
+        void Promise.resolve().then(() => {
+            if (cancelled) return null;
+            setListLoading(true); setListError('');
+            if (filters.from && filters.to && filters.from > filters.to) {
+                setListError('Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.'); setListLoading(false); return null;
+            }
+            const query: Record<string, string | number> = { page: filters.page };
+            for (const [key, value] of Object.entries(filters)) if (key !== 'page' && value !== '') query[key] = value;
+            return api.list(query);
+        }).then(result => { if (!cancelled && result) { setItems(result.items); setTotal(result.total); } })
             .catch(cause => { if (!cancelled) { setListError(errorText(cause)); setItems([]); } }).finally(() => { if (!cancelled) setListLoading(false); });
         return () => { cancelled = true; };
     }, [api, filters, refresh]);

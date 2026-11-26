@@ -136,7 +136,7 @@ async function request(session: AuthSession, path: string, options: ApiRequestOp
     }
 }
 
-function assertBranch(session: AuthSession, branchId: string) {
+function assertBranch(branchId: string) {
     if (!UUID_PATTERN.test(branchId)) throw new Error('Mã chi nhánh không hợp lệ.');
     // G2: Backend verifies exact assigned area, branch, business date and shift.
 }
@@ -156,7 +156,7 @@ async function allPages(session: AuthSession, path: string): Promise<unknown[]> 
 }
 
 export async function loadTemplate(session: AuthSession, branchId: string, businessDate?: string, shift?: WorkShift): Promise<IngredientLine[]> {
-    assertBranch(session, branchId);
+    assertBranch(branchId);
     const query = new URLSearchParams({ branchId, ...(businessDate ? { businessDate } : {}), ...(shift ? { shift } : {}) });
     const response = await request(session, `/shift-stock-counts/template?${query.toString()}`);
     if (asObject(response)?.branchId !== branchId) throw new Error('Template trả về ngoài chi nhánh đã chọn.');
@@ -175,7 +175,7 @@ export async function loadBranchList(session: AuthSession, businessDate?: string
 }
 
 export async function listCounts(session: AuthSession, branchId: string, filters?: { businessDate: string; shift: WorkShift }): Promise<ShiftCount[]> {
-    assertBranch(session, branchId);
+    assertBranch(branchId);
     const query = new URLSearchParams({ branchId, ...(filters ?? {}) });
     const counts = (await allPages(session, `/shift-stock-counts?${query.toString()}`)).map(parseCount);
     if (counts.some(count => count.branchId !== branchId || (filters && (count.businessDate !== filters.businessDate || count.shift !== filters.shift)))) {
@@ -192,7 +192,7 @@ export async function getCount(session: AuthSession, countId: string): Promise<S
     const result = await request(session, `/shift-stock-counts/${countId}`);
     const count = parseCount(result);
     if (count.id !== countId) throw new Error('Máy chủ trả về phiếu khác yêu cầu.');
-    assertBranch(session, count.branchId);
+    assertBranch(count.branchId);
     return count;
 }
 
@@ -205,7 +205,7 @@ export type SaveCountInput = {
 };
 
 export async function createCount(session: AuthSession, payload: SaveCountInput): Promise<string> {
-    assertBranch(session, payload.branchId);
+    assertBranch(payload.branchId);
     const response = await request(session, '/shift-stock-counts', {
         method: 'POST',
         body: payload,

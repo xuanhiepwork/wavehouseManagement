@@ -56,7 +56,7 @@ function parsePage<T>(value: unknown, page: number, parse: (row: Record<string, 
     }
     return { items: root.items.map(value => parse(record(value))), page, total: root.total };
 }
-function query(session: AuthSession, branchId: string, page: number, ingredientId?: string): string {
+function query(branchId: string, page: number, ingredientId?: string): string {
     if (!UUID.test(branchId) || !Number.isSafeInteger(page) || page < 1 || (ingredientId && !UUID.test(ingredientId))) throw new Error('Bộ lọc kho không hợp lệ.');
     // G2: server checks assigned branches, not the old session.branchId.
     const params = new URLSearchParams({ branchId, page: String(page) });
@@ -64,13 +64,14 @@ function query(session: AuthSession, branchId: string, page: number, ingredientI
     return params.toString();
 }
 
-export async function loadInventoryBranches(session: AuthSession, _signal?: AbortSignal): Promise<InventoryBranch[]> {
+export async function loadInventoryBranches(session: AuthSession, signal?: AbortSignal): Promise<InventoryBranch[]> {
+    if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError');
     const rows = await listOperationalBranches(session);
     return rows.map(row => ({ id: row.id, code: row.code, name: row.name, isActive: row.isActive }));
 }
 
 export async function loadInventoryBalances(session: AuthSession, branchId: string, page: number, signal?: AbortSignal): Promise<InventoryPageResult<Balance>> {
-    const params = query(session, branchId, page);
+    const params = query(branchId, page);
     return parsePage(await apiRequest<unknown>(session, `/inventory/balances?${params}`, { signal }), page, row => {
         const ingredientId = id(row.ingredientId);
         if (id(row.branchId) !== branchId) throw new Error('Máy chủ trả dữ liệu ngoài chi nhánh đã chọn.');
@@ -80,7 +81,7 @@ export async function loadInventoryBalances(session: AuthSession, branchId: stri
 
 const movementKinds = new Set(['OPENING', 'RECEIPT', 'ISSUE', 'TRANSFER_IN', 'TRANSFER_OUT', 'COUNT_ADJUSTMENT', 'RECIPE_CONSUMPTION']);
 export async function loadInventoryMovements(session: AuthSession, branchId: string, page: number, ingredientId?: string, signal?: AbortSignal): Promise<InventoryPageResult<Movement>> {
-    const params = query(session, branchId, page, ingredientId);
+    const params = query(branchId, page, ingredientId);
     return parsePage(await apiRequest<unknown>(session, `/inventory/movements?${params}`, { signal }), page, row => {
         const rowIngredientId = id(row.ingredientId);
         if (id(row.branchId) !== branchId || (ingredientId && rowIngredientId !== ingredientId) || !movementKinds.has(text(row.kind))) throw new Error('Máy chủ trả lịch sử ngoài bộ lọc đã chọn.');

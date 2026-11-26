@@ -6,6 +6,11 @@ import './InventoryPage.css';
 
 type Props = { session: AuthSession };
 type View = 'balances' | 'movements';
+type InventoryResult = {
+    key: string;
+    balances?: InventoryPageResult<Balance>;
+    movements?: InventoryPageResult<Movement>;
+};
 const kindNames: Record<string, string> = { OPENING: 'Tồn đầu kỳ', RECEIPT: 'Nhập hàng', ISSUE: 'Xuất hàng', TRANSFER_IN: 'Chuyển đến',
     TRANSFER_OUT: 'Chuyển đi', COUNT_ADJUSTMENT: 'Điều chỉnh kiểm kê', RECIPE_CONSUMPTION: 'Tiêu hao công thức' };
 const errorText = (cause: unknown) => cause instanceof Error ? cause.message : 'Không tải được dữ liệu kho.';
@@ -24,32 +29,42 @@ export function InventoryPage({ session }: Props) {
     const [reload, setReload] = useState(0);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
-    const [result, setResult] = useState<{ key: string; balances?: InventoryPageResult<Balance>; movements?: InventoryPageResult<Movement> } | null>(null);
+    const [result, setResult] = useState<InventoryResult | null>(null);
     const requestSequence = useRef(0);
     const key = JSON.stringify({ branchId, view, ingredientId: ingredientFilter?.id ?? '', page });
-    const latestKey = useRef(key); latestKey.current = key;
+    const latestKey = useRef(key);
+    useEffect(() => { latestKey.current = key; }, [key]);
 
     useEffect(() => {
         const controller = new AbortController();
-        setBranchLoading(true); setBranchError('');
-        void loadInventoryBranches(session, controller.signal).then(items => { if (!controller.signal.aborted) { setBranches(items); setBranchId(current => items.some(item => item.id === current) ? current : (items[0]?.id ?? '')); } })
-            .catch(cause => { if (!controller.signal.aborted) setBranchError(errorText(cause)); })
+        void Promise.resolve().then(() => {
+            if (controller.signal.aborted) return null;
+            setBranchLoading(true); setBranchError('');
+            return loadInventoryBranches(session, controller.signal);
+        }).then(items => {
+            if (items && !controller.signal.aborted) {
+                setBranches(items);
+                setBranchId(current => items.some(item => item.id === current) ? current : (items[0]?.id ?? ''));
+            }
+        }).catch(cause => { if (!controller.signal.aborted) setBranchError(errorText(cause)); })
             .finally(() => { if (!controller.signal.aborted) setBranchLoading(false); });
         return () => controller.abort();
     }, [session, branchReload]);
 
     useEffect(() => {
         const sequence = ++requestSequence.current;
-        setError('');
-        if (!branchId) { setResult(null); setLoading(false); return; }
         const controller = new AbortController();
         const requestKey = key;
-        setLoading(true);
-        const request = view === 'balances'
-            ? loadInventoryBalances(session, branchId, page, controller.signal).then(balances => ({ key: requestKey, balances }))
-            : loadInventoryMovements(session, branchId, page, ingredientFilter?.id, controller.signal).then(movements => ({ key: requestKey, movements }));
-        void request.then(next => {
-            if (!controller.signal.aborted && sequence === requestSequence.current && requestKey === latestKey.current) setResult(next);
+        void Promise.resolve().then<InventoryResult | null>(() => {
+            if (controller.signal.aborted) return null;
+            setError('');
+            if (!branchId) { setResult(null); setLoading(false); return null; }
+            setLoading(true);
+            return view === 'balances'
+                ? loadInventoryBalances(session, branchId, page, controller.signal).then(balances => ({ key: requestKey, balances }))
+                : loadInventoryMovements(session, branchId, page, ingredientFilter?.id, controller.signal).then(movements => ({ key: requestKey, movements }));
+        }).then(next => {
+            if (next && !controller.signal.aborted && sequence === requestSequence.current && requestKey === latestKey.current) setResult(next);
         }).catch(cause => { if (!controller.signal.aborted && sequence === requestSequence.current) { setResult(null); setError(errorText(cause)); } })
             .finally(() => { if (!controller.signal.aborted && sequence === requestSequence.current) setLoading(false); });
         return () => controller.abort();

@@ -12,7 +12,7 @@ const receiptId = '55555555-5555-4555-8555-555555555555';
 const actorId = '66666666-6666-4666-8666-666666666666';
 const session = {
     token: 'unit-fixture-only', user: {
-        id: actorId, role: 'STAFF' as const, branchId: destinationId, email: '', displayName: '',
+        id: actorId, role: 'STAFF' as const, branchId: destinationId, areaId: null, workKind: 'SALES' as const, email: '', displayName: '',
     }
 };
 const input = { note: '', items: [{ ingredientId, receivedQuantity: '10', damagedQuantity: '0', discrepancyReason: null }] };

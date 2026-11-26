@@ -63,16 +63,21 @@ export default function ReceivingPage({ session, onUnsavedChange, onWorkingChang
     const writeInFlight = useRef(false);
     const openedFromLink = useRef<string | null>(null);
     const editorSnapshot = JSON.stringify({ branchId, selectedId, entries, note, physicalReceivedAt, legacyEvidence });
-    const editorSnapshotRef = useRef(editorSnapshot); editorSnapshotRef.current = editorSnapshot;
+    const editorSnapshotRef = useRef(editorSnapshot);
+    const sessionRef = useRef(session);
+    const dirtyRef = useRef(dirty);
+    useEffect(() => { editorSnapshotRef.current = editorSnapshot; }, [editorSnapshot]);
+    useEffect(() => { sessionRef.current = session; }, [session]);
+    useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
     const pendingReconciliation = requiresReload && Boolean(details) && Boolean(error);
 
     useEffect(() => {
         const requestKey = `${initialTransferId}:${initialRequest}`;
         if (!initialTransferId || requestKey === openedFromLink.current || writeInFlight.current) return;
-        if (dirty && !window.confirm('Có biên bản chưa lưu. Bỏ thay đổi để mở phiếu chuyển kho được chọn?')) return;
+        if (dirtyRef.current && !window.confirm('Có biên bản chưa lưu. Bỏ thay đổi để mở phiếu chuyển kho được chọn?')) return;
         const expectedEditor = editorSnapshotRef.current;
         let active = true;
-        void getTransferReceiving(session, initialTransferId).then(data => {
+        void getTransferReceiving(sessionRef.current, initialTransferId).then(data => {
             if (!active) return;
             if (editorSnapshotRef.current !== expectedEditor) {
                 setError('Biểu mẫu đã thay đổi trong lúc tải liên kết. Dữ liệu đang nhập được giữ; hãy mở lại phiếu từ danh sách khi sẵn sàng.');
@@ -99,8 +104,12 @@ export default function ReceivingPage({ session, onUnsavedChange, onWorkingChang
 
     useEffect(() => {
         let active = true;
-        setBranchLoading(true);
-        void getReceivingBranches(session).then(items => {
+        void Promise.resolve().then(() => {
+            if (!active) return null;
+            setBranchLoading(true);
+            return getReceivingBranches(session);
+        }).then(items => {
+            if (!items) return;
             if (!active) return;
             setBranches(items); setBranchError('');
             // An explicit incoming-transfer link determines its destination; do not race it with a default branch.
@@ -108,15 +117,18 @@ export default function ReceivingPage({ session, onUnsavedChange, onWorkingChang
         }).catch(cause => { if (active) setBranchError(message(cause)); })
             .finally(() => { if (active) setBranchLoading(false); });
         return () => { active = false; };
-    }, [session]);
+    }, [session, initialTransferId]);
 
     useEffect(() => {
         let active = true;
-        setListing(null); setListError('');
-        if (!isBranchId(branchId)) { setListLoading(false); return; }
-        setListLoading(true);
-        void listPostedTransfers(session, branchId, page, filter).then(result => {
-            if (active) setListing(result);
+        void Promise.resolve().then(() => {
+            if (!active) return null;
+            setListing(null); setListError('');
+            if (!isBranchId(branchId)) { setListLoading(false); return null; }
+            setListLoading(true);
+            return listPostedTransfers(session, branchId, page, filter);
+        }).then(result => {
+            if (active && result) setListing(result);
         }).catch(cause => { if (active) setListError(message(cause)); })
             .finally(() => { if (active) setListLoading(false); });
         return () => { active = false; };
@@ -124,11 +136,14 @@ export default function ReceivingPage({ session, onUnsavedChange, onWorkingChang
 
     useEffect(() => {
         let active = true;
-        setDetails(null); setEntries({}); setNote(''); setPhysicalReceivedAt(''); setLegacyEvidence(''); setDirty(false); setNotice(''); setError('');
-        if (!selectedId) { setDetailLoading(false); setRequiresReload(false); return; }
-        setDetailLoading(true); setRequiresReload(true);
-        void getTransferReceiving(session, selectedId).then(data => {
-            if (!active) return;
+        void Promise.resolve().then(() => {
+            if (!active) return null;
+            setDetails(null); setEntries({}); setNote(''); setPhysicalReceivedAt(''); setLegacyEvidence(''); setDirty(false); setNotice(''); setError('');
+            if (!selectedId) { setDetailLoading(false); setRequiresReload(false); return null; }
+            setDetailLoading(true); setRequiresReload(true);
+            return getTransferReceiving(sessionRef.current, selectedId);
+        }).then(data => {
+            if (!active || !data) return;
             if (data.transfer.id !== selectedId || data.transfer.destinationBranchId !== branchId) throw new Error('Phiếu không thuộc chi nhánh nhận đã chọn.');
             setDetails(data);
             setEntries(Object.fromEntries((data.receipt?.items ?? data.transfer.items).map(item => {
@@ -158,7 +173,7 @@ export default function ReceivingPage({ session, onUnsavedChange, onWorkingChang
         return { ...item, entry, calculations, problem };
     }), [details, entries]);
     const legacyComplete = !details?.transfer.legacyReceivingRequired || (Boolean(legacyEvidence.trim())
-        && Number.isFinite(Date.parse(physicalReceivedAt)) && Date.parse(physicalReceivedAt) <= Date.now());
+        && Number.isFinite(Date.parse(physicalReceivedAt)));
     const complete = rows.length > 0 && rows.every(row => !row.problem) && legacyComplete;
     const readOnly = details?.receipt?.status === 'CONFIRMED' || requiresReload || working || detailLoading ||
         details?.transfer.id !== selectedId || details?.transfer.destinationBranchId !== branchId ||
@@ -195,6 +210,10 @@ export default function ReceivingPage({ session, onUnsavedChange, onWorkingChang
     }
     async function persist(confirm: boolean) {
         if (!details || writeInFlight.current || (confirm ? !canConfirm : !canSave)) return;
+        if (details.transfer.legacyReceivingRequired && Date.parse(physicalReceivedAt) > Date.now()) {
+            setError('Ngày nhận thực tế không được ở tương lai.');
+            return;
+        }
         if (confirm && !window.confirm('Xác nhận số thực nhận và số hỏng đã lưu? Biên bản sẽ khóa chỉnh sửa. Thao tác này không thay đổi tồn kho.')) return;
         writeInFlight.current = true; setWorking(true); onWorkingChange?.(true); setError(''); setNotice('');
         try {
@@ -318,7 +337,7 @@ export default function ReceivingPage({ session, onUnsavedChange, onWorkingChang
                 <label htmlFor="w3-evidence">Tham chiếu chứng từ và nội dung xác minh (bắt buộc)</label>
                 <textarea id="w3-evidence" rows={3} maxLength={1000} value={legacyEvidence} disabled={readOnly}
                     onChange={event => { setLegacyEvidence(event.target.value); setDirty(true); onUnsavedChange?.(true); setNotice(''); }} />
-                {!legacyComplete && <p className="w3-field-error">Cần bằng chứng và ngày nhận hợp lệ, không ở tương lai, trước khi lưu đối chiếu.</p>}
+                {!legacyComplete && <p className="w3-field-error">Cần bằng chứng và ngày nhận hợp lệ trước khi lưu. Ngày tương lai sẽ bị từ chối khi lưu.</p>}
                 <p>Thời điểm xác nhận và người xác nhận được ghi riêng khi khóa biên bản. Đối chiếu lịch sử không thay đổi tồn kho.</p>
             </div>}
             <div className="w3-panel">

@@ -34,9 +34,8 @@ export default function StockWriteOffPage({session}:{session:AuthSession}) {
         const [available, documents]=await Promise.all([stockWriteOffApi.targets(session),stockWriteOffApi.requests(session)]);
         setTargets(available); setRequests(documents.items);
     },[session]);
-    useEffect(()=>{void refresh().catch(err=>setError(err instanceof Error?err.message:'Không tải được G8.'));},[refresh]);
+    useEffect(()=>{void Promise.resolve().then(() => refresh()).catch(err=>setError(err instanceof Error?err.message:'Không tải được G8.'));},[refresh]);
     useEffect(()=>{
-        setBalances([]);setQuantities({});submissionKey.current=null;
         if(!locationId)return;
         let active=true;
         void stockWriteOffApi.balances(session,locationType,locationId).then(result=>{
@@ -96,9 +95,9 @@ export default function StockWriteOffPage({session}:{session:AuthSession}) {
         {message && <p role="status" className="wh-g8-success">{message}</p>}
         {uncertain && <p className="wh-g8-warning">Phản hồi chưa xác định. Hãy tải lại và kiểm tra danh sách chứng từ trước khi gửi thao tác tiếp.</p>}
         <article className="wh-g8-card"><h3>Lập yêu cầu giảm tồn</h3>
-            <div className="wh-g8-fields"><label>Loại địa điểm<select value={locationType} disabled={busy} onChange={e=>{setLocationType(e.target.value as LocationType);setLocationId('');clearDraft();}}>
+            <div className="wh-g8-fields"><label>Loại địa điểm<select value={locationType} disabled={busy} onChange={e=>{setLocationType(e.target.value as LocationType);setLocationId('');setBalances([]);clearDraft();}}>
                 <option value="BRANCH">Quầy bán</option><option value="WAREHOUSE">Kho bếp trung tâm</option></select></label>
-                <label>Địa điểm<select value={locationId} disabled={busy} onChange={e=>{setLocationId(e.target.value);clearDraft();}}>
+                <label>Địa điểm<select value={locationId} disabled={busy} onChange={e=>{setLocationId(e.target.value);setBalances([]);clearDraft();}}>
                     <option value="">Chọn địa điểm</option>{available.map(item=><option value={item.id} key={item.id}>{item.code} — {item.name}</option>)}
                 </select></label>
                 <label>Nguyên nhân<select value={reason} disabled={busy} onChange={e=>{setReason(e.target.value as WriteOffReason);clearDraft();}}>

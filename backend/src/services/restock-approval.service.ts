@@ -56,7 +56,7 @@ const planSelect = {
     events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: {
         id: true, action: true, note: true, createdAt: true, actor: { select: { displayName: true } },
     } },
-} as const;
+} satisfies Prisma.RestockPlanSelect;
 
 export async function listRestockPlans(db: PrismaClient, actor: Actor, businessDate: string) {
     const current = await actorScope(db, actor);
@@ -112,7 +112,9 @@ export async function submitRestockPlan(db: PrismaClient, actor: Actor, input: u
     if (branches.length !== branchIds.length || branches.some(x => !x.areaId || !x.area?.isActive) ||
         new Set(branches.map(x => x.areaId)).size !== 1)
         throw new ApprovalError('Một đề xuất chỉ thuộc một khu vực còn hoạt động.', 409);
-    const areaId = branches[0].areaId!;
+    const firstBranch = branches[0];
+    if (!firstBranch?.areaId) throw new ApprovalError('Không tìm thấy khu vực phù hợp.', 409);
+    const areaId = firstBranch.areaId;
     if (current.role === 'BRANCH_MANAGER' && areaId !== current.areaId)
         throw new ApprovalError('Quầy ngoài khu vực quản lý.', 403);
     // Server recomputes the B7 plan: clients cannot supply arbitrary quantities.

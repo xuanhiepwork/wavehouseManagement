@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { CatalogApiError, createCatalogClient } from './api/catalog'
 import Catalog from './catalog/Catalog'
 import type { AuthSession } from './workspace/auth'
@@ -11,9 +11,9 @@ function connect(session?: AuthSession, getToken?: () => string | undefined) {
 
 export default function App({ session, onDirtyChange, onWorkingChange }: { session?: AuthSession; onDirtyChange?: (value: boolean) => void; onWorkingChange?: (value: boolean) => void }) {
   const sessionRef = useRef(session)
-  sessionRef.current = session
-  const getToken = () => sessionRef.current?.token
-  const [connection, setConnection] = useState(() => connect(session, getToken))
+  useEffect(() => { sessionRef.current = session }, [session])
+  const getToken = useCallback(() => sessionRef.current?.token, [])
+  const [connection, setConnection] = useState(() => connect(session, () => session?.token))
   if (!connection.client) return <main className="connection-state">
     <span className="brand-mark" aria-hidden="true">W</span>
     <p className="eyebrow">WaveHouse / Catalog</p><h1>Connect your catalog</h1>

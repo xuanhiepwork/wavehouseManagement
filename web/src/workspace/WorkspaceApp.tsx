@@ -278,7 +278,7 @@ export default function WorkspaceApp() {
                         : session.user.role === 'STAFF' ? <StartingPage role={session.user.role} onOpen={navigate} />
                         : <AreaDashboard session={session} onNavigate={navigate} />)}
                     {visited.has('kitchen') && <div hidden={selected.id !== 'kitchen'}><KitchenPage session={session} /></div>}
-                    {visited.has('delivery') && <div hidden={selected.id !== 'delivery'}><DistributionPage session={session} /></div>}
+                    {visited.has('delivery') && <div hidden={selected.id !== 'delivery'}><DistributionPage session={session} onOpenPlanning={() => navigate('kitchen-planning')} /></div>}
                     {visited.has('kitchen-planning') && <div hidden={selected.id !== 'kitchen-planning'}><KitchenPlanningPage session={session} onOpenDistribution={() => { navigate('delivery'); }} /></div>}
                     {visited.has('delivery-discrepancies') && <div hidden={selected.id !== 'delivery-discrepancies'}><DeliveryDiscrepanciesPage session={session} /></div>}
                     {visited.has('delivery-reconciliation') && <div hidden={selected.id !== 'delivery-reconciliation'}><DeliveryReconciliationPage session={session} /></div>}

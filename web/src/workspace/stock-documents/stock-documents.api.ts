@@ -156,7 +156,8 @@ export async function loadDocumentIngredients(session: AuthSession, signal?: Abo
     }
     return [...result.values()].sort((a, b) => a.code.localeCompare(b.code));
 }
-export async function loadDocumentBranches(session: AuthSession, _signal?: AbortSignal): Promise<BranchOption[]> {
+export async function loadDocumentBranches(session: AuthSession, signal?: AbortSignal): Promise<BranchOption[]> {
+    if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError');
     const rows = await listOperationalBranches(session);
     return rows.map(row => ({ id: row.id, code: row.code, name: row.name, isActive: row.isActive }));
 }

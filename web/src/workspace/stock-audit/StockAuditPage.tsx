@@ -52,12 +52,12 @@ export default function StockAuditPage({session}:{session:AuthSession}) {
     const [draftFrom,setDraftFrom] = useState(dates.from);
     const [draftTo,setDraftTo] = useState(dates.to);
     const [data,setData] = useState<StockAuditSnapshot|null>(null);
-    const [busy,setBusy] = useState(false);
+    const [busy,setBusy] = useState(true);
     const [error,setError] = useState('');
     const [search,setSearch] = useState('');
     const [reload,setReload] = useState(0);
     useEffect(()=>{
-        let active=true;setBusy(true);setError('');
+        let active=true;
         void stockAuditApi.snapshot(session,dates.from,dates.to).then(result=>{
             if(active)setData(result);
         }).catch(err=>{if(active){setData(null);setError(err instanceof Error?err.message:'Không thể đọc báo cáo G9.');}})
@@ -73,7 +73,7 @@ export default function StockAuditPage({session}:{session:AuthSession}) {
         if(!draftFrom||!draftTo||draftFrom>draftTo){setError('Khoảng ngày không hợp lệ.');return;}
         const span=(Date.parse(draftTo)-Date.parse(draftFrom))/86400000;
         if(span>30){setError('Chọn tối đa 31 ngày.');return;}
-        setDates({from:draftFrom,to:draftTo});setReload(x=>x+1);
+        setBusy(true);setError('');setDates({from:draftFrom,to:draftTo});setReload(x=>x+1);
     }
     return <section className="wh-g9">
         <div className="wh-heading"><div><p className="wh-eyebrow">G9 / BÁO CÁO ĐỐI SOÁT</p><h2>Tồn kho toàn chuỗi & luồng giao nhận</h2></div></div>

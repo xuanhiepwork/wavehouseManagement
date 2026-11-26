@@ -14,7 +14,14 @@ const actorId = '66666666-6666-4666-8666-666666666666';
 function fixture() {
     const calls = { create: [], update: [], itemDelete: 0, itemCreate: [] };
     const tx = {
-        branch: { count: async ({ where }) => where.id.in.length },
+        branch: {
+            // G2 checks source branch authorization before entering the write transaction.
+            findMany: async ({ where }) => {
+                assert.deepEqual(where, { isActive: true });
+                return [{ id: sourceBranchId }, { id: destinationBranchId }];
+            },
+            count: async ({ where }) => where.id.in.length,
+        },
         ingredient: {
             findMany: async ({ where }) => where.id.in
                 .filter(id => [pieceId, gramId, milliliterId].includes(id))
@@ -40,7 +47,9 @@ function fixture() {
             createMany: async ({ data }) => { calls.itemCreate.push(data); },
         },
     };
-    const prisma = { $transaction: async work => work(tx) };
+    // The mounted receiving router checks ADMIN branch scope before routing POST/PATCH.
+    // Provide the same read-only branch query at the Prisma root as in the tx mock.
+    const prisma = { branch: tx.branch, $transaction: async work => work(tx) };
     const app = express();
     app.use(express.json());
     app.use((_req, res, next) => {

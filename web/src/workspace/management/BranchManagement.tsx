@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { AuthSession } from '../auth';
 import { createBranch, getBranch, listBranches, updateBranch, type BranchRecord, type Page } from './management.api';
-import { errorMessage, mayDiscard, Pagination, timestamp, useManagementActivity, type ActivityProps } from './management.shared';
+import { Pagination } from './management.shared';
+import { errorMessage, mayDiscard, timestamp, useManagementActivity, type ActivityProps } from './management.utils';
 
 type Props = ActivityProps & { session: AuthSession };
 type Form = { code: string; name: string; isActive: boolean };
@@ -13,7 +14,7 @@ export default function BranchManagement({ session, ...activity }: Props) {
     const [editorOpen, setEditorOpen] = useState(false);
     const [form, setForm] = useState<Form>(emptyForm);
     const [baseline, setBaseline] = useState(JSON.stringify(emptyForm()));
-    const [busy, setBusy] = useState(false);
+    const [busy, setBusy] = useState(true);
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
     const lock = useRef(false);
@@ -22,7 +23,7 @@ export default function BranchManagement({ session, ...activity }: Props) {
 
     useEffect(() => {
         let active = true;
-        lock.current = true; setBusy(true);
+        lock.current = true;
         void listBranches(session, 1).then(value => { if (active) setResult(value); })
             .catch(cause => { if (active) setError(errorMessage(cause)); })
             .finally(() => { if (active) { lock.current = false; setBusy(false); } });

@@ -145,7 +145,41 @@ export async function dispatchDistributionTrip(prisma: PrismaClient, actor: Dist
         await assertKitchenAccess(tx, actor, trip.warehouseId);
         if (actor.role === 'STAFF' && trip.courierId !== actor.id) throw new DistributionError('Chuyến này không được phân công cho bạn.', 403);
         if (trip.status !== 'DRAFT') throw new DistributionError('Chuyến không còn ở trạng thái nháp. Hãy tải lại trước khi thao tác.', 409);
+        // G10: every dispatch must be linked to an approved G6 proposal.
+        // G6 marks a proposal CONVERTED together with trip creation in one transaction;
+        // a direct/legacy draft without the approval record cannot affect inventory.
+        const approved = await tx.restockPlan.findFirst({ where: {
+            deliveryTripId: trip.id, status: 'CONVERTED',
+            reviewedById: { not: null }, reviewedAt: { not: null },
+        }, select: { warehouseId: true, businessDate: true, areaId: true,
+            lines: { select: { branchId: true, ingredientId: true, quantity: true } },
+        } });
+        if (!approved || approved.warehouseId !== trip.warehouseId ||
+            approved.businessDate.getTime() !== trip.businessDate.getTime()) {
+            throw new DistributionError('Chuyến chưa liên kết kế hoạch G6 đã duyệt; không được xuất kho.', 409);
+        }
         if (!trip.stops.length) throw new DistributionError('Chuyến chưa có điểm giao.', 409);
+        // Keep the approved immutable quantities authoritative even if a draft has
+        // been altered outside the supported application workflow.
+        const expected = new Map<string, Prisma.Decimal>(approved.lines.map(line => [
+            `${line.branchId}/${line.ingredientId}`, line.quantity,
+        ] as const));
+        for (const stop of trip.stops) for (const item of stop.items) {
+            const key = `${stop.branchId}/${item.ingredientId}`;
+            const permitted = expected.get(key);
+            if (!permitted || !permitted.eq(item.plannedQuantity)) {
+                throw new DistributionError('SKU/số lượng chuyến khác với kế hoạch G6 đã duyệt.', 409);
+            }
+            expected.delete(key);
+        }
+        if (expected.size) throw new DistributionError('Chuyến chưa đủ dòng hàng theo kế hoạch G6 đã duyệt.', 409);
+        const branchIds = [...new Set(trip.stops.map(stop => stop.branchId))];
+        const activeInArea = await tx.branch.count({ where: {
+            id: { in: branchIds }, areaId: approved.areaId, isActive: true,
+        } });
+        if (activeInArea !== branchIds.length) {
+            throw new DistributionError('Quầy đã ngừng hoạt động hoặc chuyển khỏi khu vực trong kế hoạch G6.', 409);
+        }
         const byIngredient = new Map<string, Prisma.Decimal>();
         for (const stop of trip.stops) for (const item of stop.items) {
             const previous = byIngredient.get(item.ingredientId) ?? new Prisma.Decimal(0);
@@ -182,6 +216,7 @@ export async function receiveDistributionStop(prisma: PrismaClient, actor: Distr
     if (!body || !onlyKeys(body, ['items', 'note']) || !Array.isArray(body.items))
         throw new DistributionError('Dữ liệu nhận hàng không hợp lệ.', 400);
     const memo = note(body.note);
+    const receivedItems: unknown[] = body.items;
     return prisma.$transaction(async tx => {
         const stop = await tx.deliveryStop.findUnique({ where: { id: id(stopId) },
             include: { trip: { select: { id: true, status: true, businessDate: true, stops: { select: { id: true } } } },
@@ -192,9 +227,9 @@ export async function receiveDistributionStop(prisma: PrismaClient, actor: Distr
         if (!permitted.includes(stop.branchId)) throw new DistributionError('Bạn không được phân công nhận hàng tại quầy này.', 403);
         if (stop.trip.status !== 'IN_TRANSIT' || stop.status !== 'DISPATCHED')
             throw new DistributionError('Điểm giao chưa xuất kho hoặc đã xác nhận. Hãy tải lại.', 409);
-        if (body.items.length !== stop.items.length) throw new DistributionError('Phải nhập đầy đủ mọi SKU tại điểm giao.', 400);
+        if (receivedItems.length !== stop.items.length) throw new DistributionError('Phải nhập đầy đủ mọi SKU tại điểm giao.', 400);
         const amounts = new Map<string, { received: Prisma.Decimal; damaged: Prisma.Decimal }>();
-        for (const raw of body.items) {
+        for (const raw of receivedItems) {
             const item = readBody(raw);
             if (!item || !onlyKeys(item, ['ingredientId', 'receivedQuantity', 'damagedQuantity']))
                 throw new DistributionError('Dòng nhận hàng không hợp lệ.', 400);

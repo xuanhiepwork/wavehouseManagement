@@ -19,7 +19,6 @@ function PagedTable<T>({ items, headers, row, empty = 'Chưa có bản ghi phù 
     items: T[]; headers: string[]; row: (item: T) => ReactNode; empty?: string;
 }) {
     const [page, setPage] = useState(1);
-    useEffect(() => { setPage(1); }, [items]);
     const pages = Math.max(1, Math.ceil(items.length / 25));
     const currentPage = Math.min(page, pages);
     if (!items.length) return <p className="w6-empty">{empty}</p>;
@@ -48,8 +47,14 @@ function RestockPlanner({ session, branches, branchError, onReloadBranches }: { 
     const locked = useRef(false);
     const alive = useRef(true);
     const key = JSON.stringify({ businessDate, shift, source, destinations });
-    const keyRef = useRef(key); keyRef.current = key;
-    useEffect(() => { alive.current = true; return () => { alive.current = false; sequence.current++; }; }, []);
+    const keyRef = useRef(key);
+    useEffect(() => { keyRef.current = key; }, [key]);
+    useEffect(() => {
+        alive.current = true;
+        // Invalidate any request still pending when the component unmounts.
+        const invalidateRequests = () => { sequence.current += 1; };
+        return () => { alive.current = false; invalidateRequests(); };
+    }, []);
     const plan = result?.key === key ? result.plan : null;
     async function submit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -108,28 +113,36 @@ function ManagementDashboard({ session, onNavigate }: Props) {
     const rangeError = dateRangeError(filters.from, filters.to);
     const data = !rangeError && result?.key === requestKey ? result.data : null;
     useEffect(() => {
-        const controller = new AbortController(); let active = true;
-        setBranchError('');
-        void loadDashboardBranches(session, controller.signal).then(rows => { if (active) setBranches(rows); })
+        const controller = new AbortController();
+        let active = true;
+        void Promise.resolve().then(() => {
+            if (!active) return null;
+            setBranchError('');
+            return loadDashboardBranches(session, controller.signal);
+        }).then(rows => { if (active && rows) setBranches(rows); })
             .catch(cause => { if (active) setBranchError(errorText(cause)); });
         return () => { active = false; controller.abort(); };
     }, [session, branchReload]);
     useEffect(() => {
         const request = ++sequence.current;
         const controller = new AbortController();
-        setResult(null); setError(null);
-        if (rangeError) { setLoading(false); return () => controller.abort(); }
-        setLoading(true);
-        const timeout = window.setTimeout(() => controller.abort(), 40000);
         let active = true;
-        void loadDashboardSummary(session, filters, controller.signal).then(next => {
-            if (active && request === sequence.current) setResult({ key: requestKey, data: next });
+        let timeout: number | undefined;
+        void Promise.resolve().then(() => {
+            if (!active) return null;
+            setResult(null); setError(null);
+            if (rangeError) { setLoading(false); return null; }
+            setLoading(true);
+            timeout = window.setTimeout(() => controller.abort(), 40000);
+            return loadDashboardSummary(session, filters, controller.signal);
+        }).then(next => {
+            if (next && active && request === sequence.current) setResult({ key: requestKey, data: next });
         }).catch(cause => {
             if (active && request === sequence.current) setError({ message: cause instanceof DashboardApiError ? cause.message : 'Không kết nối được máy chủ hoặc yêu cầu đã hết thời gian. Hãy thử tải lại.',
                 status: cause instanceof DashboardApiError ? cause.status : 0 });
-        }).finally(() => { window.clearTimeout(timeout); if (active && request === sequence.current) setLoading(false); });
-        return () => { active = false; controller.abort(); window.clearTimeout(timeout); };
-    }, [session, requestKey, reload, rangeError]);
+        }).finally(() => { if (timeout !== undefined) window.clearTimeout(timeout); if (active && request === sequence.current) setLoading(false); });
+        return () => { active = false; controller.abort(); if (timeout !== undefined) window.clearTimeout(timeout); };
+    }, [session, filters, requestKey, reload, rangeError]);
     const branchMap = useMemo(() => new Map(data?.scope.branches.map(b => [b.id, `${b.code} — ${b.name}`]) ?? []), [data]);
     const branchName = (id: string) => branchMap.get(id) ?? id;
     const inventoryRows = useMemo(() => data?.inventorySummary.rows.filter(r => {

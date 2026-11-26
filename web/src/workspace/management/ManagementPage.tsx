@@ -1,7 +1,7 @@
 import type { AuthSession } from '../auth';
 import BranchManagement from './BranchManagement';
 import UserManagement from './UserManagement';
-import type { ActivityProps } from './management.shared';
+import type { ActivityProps } from './management.utils';
 import './ManagementPage.css';
 
 type Props = ActivityProps & { session: AuthSession; mode: 'branches' | 'users' };

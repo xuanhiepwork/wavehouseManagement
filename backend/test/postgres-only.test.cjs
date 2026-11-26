@@ -10,7 +10,15 @@ test('real app preserves login, session, roles, catalog CRUD guards and inventor
     const user = { id: randomUUID(), email: 'fixture@example.test', displayName: 'Fixture', role: 'ADMIN', branchId: null,
         branch: null, isActive: true, passwordHash: await hashPassword('local fixture password') };
     const calls = [];
-    const db = { user: { findUnique: async () => user } };
+    // G2 branch access for legacy STAFF reads the assigned branch before a scoped GET.
+    // Model that read explicitly; a foreign branch must remain inaccessible.
+    const db = {
+        user: { findUnique: async () => user },
+        branch: {
+            findFirst: async ({ where }) => where.id === branchId && where.isActive === true
+                ? { id: branchId } : null,
+        },
+    };
     const record = { _id: randomUUID(), code: 'FIXTURE', isActive: true };
     const ingredients = {
         listIngredients: async () => ({ data: [record], pagination: { page: 1, limit: 20, total: 1, totalPages: 1 } }),

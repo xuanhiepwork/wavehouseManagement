@@ -101,6 +101,7 @@ export default function StockDocumentsPage({ session, kind, onDirtyChange, onWor
     const totalPages = Math.max(1, Math.ceil(result.total / 50));
     const ingredientById = new Map(ingredients.map(item => [item.id, item]));
     const balanceById = new Map(balances.map(item => [item.ingredientId, item]));
+    const hasSelectedDocument = Boolean(selected);
     const branchLabel = (id?: string | null) => {
         if (!id) return '—';
         const branch = branches.find(item => item.id === id);
@@ -118,8 +119,13 @@ export default function StockDocumentsPage({ session, kind, onDirtyChange, onWor
     }, [needsAttention, working]);
     useEffect(() => {
         const controller = new AbortController();
-        setMetadataReady(false); setMetadataError('');
-        void Promise.all([loadDocumentIngredients(session, controller.signal), loadDocumentBranches(session, controller.signal)]).then(([ingredientRows, branchRows]) => {
+        void Promise.resolve().then(() => {
+            if (controller.signal.aborted) return null;
+            setMetadataReady(false); setMetadataError('');
+            return Promise.all([loadDocumentIngredients(session, controller.signal), loadDocumentBranches(session, controller.signal)]);
+        }).then(result => {
+            if (!result) return;
+            const [ingredientRows, branchRows] = result;
             if (controller.signal.aborted) return;
             setIngredients(ingredientRows); setBranches(branchRows); setMetadataReady(true);
         }).catch(failure => { if (!controller.signal.aborted) setMetadataError(message(failure)); });
@@ -127,29 +133,36 @@ export default function StockDocumentsPage({ session, kind, onDirtyChange, onWor
     }, [session, metadataRevision]);
     useEffect(() => {
         const controller = new AbortController();
-        setLoadingList(true); setListError(''); setResult({ items: [], page, total: 0 });
-        void listDocuments(session, kind, page, filter, controller.signal).then(value => {
-            if (!controller.signal.aborted) setResult(value);
+        void Promise.resolve().then(() => {
+            if (controller.signal.aborted) return null;
+            setLoadingList(true); setListError(''); setResult({ items: [], page, total: 0 });
+            return listDocuments(session, kind, page, filter, controller.signal);
+        }).then(value => {
+            if (!controller.signal.aborted && value) setResult(value);
         }).catch(failure => { if (!controller.signal.aborted) setListError(message(failure)); })
             .finally(() => { if (!controller.signal.aborted) setLoadingList(false); });
         return () => controller.abort();
     }, [session, kind, page, filter, listRevision]);
     useEffect(() => {
         const controller = new AbortController();
-        setBalances([]); setBalanceAt(''); setBalanceError('');
-        if ((!selected && !creating) || !form.branchId) return () => controller.abort();
-        // Backend validates the selected branch against area or today's assignment.
-        void loadSourceBalances(session, form.branchId, controller.signal).then(value => {
+        void Promise.resolve().then(() => {
+            if (controller.signal.aborted) return null;
+            setBalances([]); setBalanceAt(''); setBalanceError('');
+            if ((!hasSelectedDocument && !creating) || !form.branchId) return null;
+            // Backend validates the selected branch against area or today's assignment.
+            return loadSourceBalances(session, form.branchId, controller.signal);
+        }).then(value => {
+            if (!value) return;
             if (!controller.signal.aborted) { setBalances(value); setBalanceAt(new Date().toISOString()); }
         }).catch(failure => { if (!controller.signal.aborted) setBalanceError(message(failure)); });
         return () => controller.abort();
-    }, [session, form.branchId, selected?.id, creating, balanceRevision]);
+    }, [session, form.branchId, selected?.id, hasSelectedDocument, creating, balanceRevision]);
 
     const applyDocument = useCallback((value: StockDocument) => {
         const next = fromDocument(value);
         setSelected(value); setCreating(false); setForm(next); setBaseline(JSON.stringify(next)); setAttemptedCode('');
     }, []);
-    async function openDocument(id: string) {
+    const openDocument = useCallback(async (id: string) => {
         if (lock.current || (dirty && !window.confirm('Bỏ các thay đổi chưa lưu để mở chứng từ khác?'))) return;
         if (!isDocumentId(id)) { setError('Mã định danh chứng từ không hợp lệ.'); return; }
         const request = ++selectionRequest.current;
@@ -159,14 +172,14 @@ export default function StockDocumentsPage({ session, kind, onDirtyChange, onWor
             if (request === selectionRequest.current) { applyDocument(value); setUncertain(null); setRecoveryConflictId(null); }
         } catch (failure) { if (request === selectionRequest.current) setError(message(failure)); }
         finally { if (request === selectionRequest.current) setLoadingDetail(false); }
-    }
+    }, [session, kind, dirty, applyDocument]);
     useEffect(() => {
         const selectionKey = `${kind}:${initialDocumentId}:${initialRequest ?? 0}`;
         if (!initialDocumentId || initialSeen.current === selectionKey) return;
         initialSeen.current = selectionKey;
         void openDocument(initialDocumentId);
         // An external selection is consumed once, so local typing never reloads it.
-    }, [initialDocumentId, initialRequest, kind]);
+    }, [initialDocumentId, initialRequest, kind, openDocument]);
 
     function startNew() {
         if (!writer || busy || uncertain || (dirty && !window.confirm('Bỏ các thay đổi chưa lưu để tạo phiếu mới?'))) return;

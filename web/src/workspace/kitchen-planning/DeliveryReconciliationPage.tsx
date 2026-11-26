@@ -32,7 +32,7 @@ export default function DeliveryReconciliationPage({ session }: {session: AuthSe
         ]);
         setCases(report.items); setRequests(documents.items);
     },[session,day]);
-    useEffect(() => { void refresh().catch(cause => setError(cause instanceof Error ? cause.message : 'Không tải được đối soát.')); },[refresh]);
+    useEffect(() => { void Promise.resolve().then(() => refresh()).catch(cause => setError(cause instanceof Error ? cause.message : 'Không tải được đối soát.')); },[refresh]);
     function clearDraft() { setSelected(null); setEvidence(''); setQuantities({}); key.current=null; }
     async function reload() {
         setError(''); setMessage('');

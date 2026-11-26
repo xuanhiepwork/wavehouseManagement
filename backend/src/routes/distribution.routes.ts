@@ -2,7 +2,7 @@ import { Router, type Response } from 'express';
 import type { PrismaClient } from '../generated/prisma/client';
 import {
     type DistributionActor, distributionFailure, distributionBranches, listDistributionTrips,
-    getDistributionTrip, createDistributionTrip, dispatchDistributionTrip, receiveDistributionStop,
+    getDistributionTrip, dispatchDistributionTrip, receiveDistributionStop,
     localDate,
 } from '../services/distribution.service';
 
@@ -29,9 +29,11 @@ export function createDistributionRouter(prisma: PrismaClient) {
         try { res.json({ data: await getDistributionTrip(prisma, actor(res), req.params.id) }); }
         catch (error) { reply(res, error); }
     });
-    router.post('/trips', async (req, res) => {
-        try { res.status(201).json({ data: await createDistributionTrip(prisma, actor(res), req.body) }); }
-        catch (error) { reply(res, error); }
+    // G10: G6 plan approval is mandatory; the internal trip factory is only called
+    // by convertRestockPlan in the same SERIALIZABLE transaction as plan conversion.
+    // Never allow an arbitrary client to bypass the approval history.
+    router.post('/trips', (_req, res) => {
+        res.status(409).json({ error: 'Tạo chuyến trực tiếp đã được thay bằng G6. Hãy gửi đề xuất, chờ ADMIN khác người lập duyệt, rồi chuyển thành chuyến nháp.' });
     });
     router.post('/trips/:id/dispatch', async (req, res) => {
         try {

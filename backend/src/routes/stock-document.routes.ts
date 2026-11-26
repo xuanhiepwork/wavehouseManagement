@@ -71,7 +71,7 @@ function readableScope(actor: Actor, kind: Kind, staffBranches: string[] = []): 
             ? { OR: [{ sourceBranch: { areaId: actor.areaId } }, { destinationBranch: { areaId: actor.areaId } }] }
             : { sourceBranch: { areaId: actor.areaId } };
         return kind === 'TRANSFER'
-            ? { OR: [{ sourceBranchId: actor.branchId }, { destinationBranchId: actor.branchId }] }
+            ? { OR: [{ sourceBranchId: actor.branchId! }, { destinationBranchId: actor.branchId! }] }
             : { sourceBranchId: actor.branchId! };
     }
     if (actor.areaId && actor.workKind === 'SALES') return kind === 'TRANSFER'

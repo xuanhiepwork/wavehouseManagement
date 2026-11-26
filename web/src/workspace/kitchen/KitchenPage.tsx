@@ -48,7 +48,7 @@ function IngredientLines<T extends QuantityRow>({ ingredients, rows, onChange, w
                     onChange={e => modify(index, 'quantity', e.target.value)} />
             </label>
             {withCost && <label>Đơn giá nhập (VND)
-                <input disabled={disabled} required placeholder="0" inputMode="decimal" value={(row as ReceiptRow).unitCost}
+                <input disabled={disabled} required placeholder="0" inputMode="decimal" value={('unitCost' in row ? String(row.unitCost) : '')}
                     onChange={e => modify(index, 'unitCost', e.target.value)} />
             </label>}
             <button type="button" className="wh-kitchen-subtle" disabled={disabled || rows.length === 1}
@@ -118,8 +118,8 @@ export default function KitchenPage({ session }: { session: AuthSession }) {
         if (assignmentResponse) setAssignments(assignmentResponse.items);
     }, [session, isAdmin]);
 
-    useEffect(() => { void loadBasic().catch(cause => setError(problem(cause))); }, [loadBasic]);
-    useEffect(() => { void loadDetails(selected).catch(cause => setError(problem(cause)));
+    useEffect(() => { void Promise.resolve().then(() => loadBasic()).catch(cause => setError(problem(cause))); }, [loadBasic]);
+    useEffect(() => { void Promise.resolve().then(() => loadDetails(selected)).catch(cause => setError(problem(cause)));
         return () => { detailRequest.current += 1; };
     }, [loadDetails, selected]);
 

@@ -60,7 +60,7 @@ const requestSelect = {
     events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: {
         action: true, note: true, createdAt: true, actor: { select: { displayName: true } },
     } },
-} as const;
+} satisfies Prisma.DeliveryRecoveryAdjustmentSelect;
 async function getRequest(db: Database, actor: DistributionActor, requestId: string) {
     const user = await scope(db, actor);
     const result = await db.deliveryRecoveryAdjustment.findUnique({ where: { id: uuid(requestId) }, select: requestSelect });

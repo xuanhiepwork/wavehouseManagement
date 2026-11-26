@@ -40,7 +40,7 @@ export default function RecipeEvidencePage({ session }: Props) {
             setBranchId(current => current || rows[0]?.id || '');
         }).catch(cause => { if (active) setError(errorMessage(cause)); });
         return () => { active = false; };
-    }, [session.token, session.user.role, isAdmin]);
+    }, [session, isAdmin]);
 
     async function loadList() {
         if (!branchId || busy) return;

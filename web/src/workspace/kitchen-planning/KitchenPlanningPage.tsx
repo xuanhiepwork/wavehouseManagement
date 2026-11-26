@@ -54,7 +54,7 @@ export default function KitchenPlanningPage({ session, onOpenDistribution }: {
         setWarehouseId(previous => previous || r.warehouses[0]?.id || '');
         setSelectedBranches(previous => previous.filter(id => r.branches.some(branch => branch.id === id)));
     }, [session, day]);
-    useEffect(() => { void refresh().catch(cause => setError(cause instanceof Error ? cause.message : 'Không tải được kế hoạch.')); }, [refresh]);
+    useEffect(() => { void Promise.resolve().then(() => refresh()).catch(cause => setError(cause instanceof Error ? cause.message : 'Không tải được kế hoạch.')); }, [refresh]);
     useEffect(() => {
         if (!admin || !warehouseId) return;
         let alive = true;
@@ -176,7 +176,7 @@ export default function KitchenPlanningPage({ session, onOpenDistribution }: {
                 </tr>)}</tbody></table></div>
             {!preview.plan.recommendations.length && <p>Chưa có SKU cần bổ sung dựa trên tồn quầy, tồn tối thiểu và dữ liệu B6 được duyệt.</p>}
             <p className="wh-g5-warning">Đây chưa phải phê duyệt tồn kho hoặc lệnh xuất hàng. Chuyến G4 nháp không giữ tồn; kho sẽ kiểm tra lại số lượng khi xuất.</p>
-            {overLimit && <p className="wh-error">Có quầy vượt 50 SKU/chuyến G4. Vui lòng chia các chuyến thủ công trên trang Điều phối giao hàng.</p>}
+            {overLimit && <p className="wh-error">Có quầy vượt giới hạn 50 SKU trong một đề xuất. Hãy chia kế hoạch thành các đề xuất nhỏ hơn và gửi duyệt từng đề xuất; không lập chuyến trực tiếp.</p>}
             <div className="wh-g5-approve"><h4>G6 — Gửi kế hoạch để xét duyệt</h4>
                 <p>Bản kế hoạch được hệ thống tính lại trước khi lưu. ADMIN không được tự duyệt đề xuất do mình gửi.</p>
                 <label>Ghi chú đề xuất<textarea value={submissionNote} maxLength={500} onChange={e=>setSubmissionNote(e.target.value)} /></label>

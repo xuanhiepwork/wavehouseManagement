@@ -37,16 +37,14 @@ export default function AIAdvisoryPage({ session }: Props) {
     const canView = session.user.role === 'ADMIN';
 
     useEffect(() => {
-        if (!canView) { setLoadingBranches(false); return; }
+        if (!canView) return;
         const controller = new AbortController();
-        setLoadingBranches(true);
-        setBranchError('');
         void listAllBranches(session, controller.signal)
-            .then(setBranches)
+            .then(items => { if (!controller.signal.aborted) { setBranches(items); setBranchError(''); } })
             .catch(err => { if (!controller.signal.aborted) setBranchError(viewError(err)); })
             .finally(() => { if (!controller.signal.aborted) setLoadingBranches(false); });
         return () => controller.abort();
-    }, [session.token, session.user.role, canView]);
+    }, [session, canView]);
 
     useEffect(() => () => { currentRequest.current?.abort(); }, []);
 

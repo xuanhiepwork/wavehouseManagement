@@ -79,7 +79,7 @@ const detailSelect = {
     events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: {
         action: true, note: true, createdAt: true, actor: { select: { displayName: true } },
     } },
-} as const;
+} satisfies Prisma.StockWriteOffSelect;
 async function detail(db: Database, actor: DistributionActor, id: string) {
     const result = await db.stockWriteOff.findUnique({ where: { id: uuid(id) }, select: detailSelect });
     if (!result) throw new WriteOffError('Không tìm thấy chứng từ.', 404);
