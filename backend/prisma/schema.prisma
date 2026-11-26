@@ -47,6 +47,7 @@ model Ingredient {
   productionBatchOutputs ProductionBatchOutput[]
   deliveryStopItems DeliveryStopItem[]
   restockPlanLines RestockPlanLine[]
+  recoveryAdjustmentItems DeliveryRecoveryAdjustmentItem[]
 
   @@index([category, isActive])
   @@map("ingredients")
@@ -162,6 +163,7 @@ model Branch {
   shiftAssignments ShiftAssignment[]
   deliveryStops DeliveryStop[]
   restockPlanLines RestockPlanLine[]
+  recoveryAdjustments DeliveryRecoveryAdjustment[]
 
   @@index([areaId])
   @@map("branches")
@@ -216,6 +218,9 @@ model User {
   restockPlanEvents RestockPlanEvent[]
   deliveryDiscrepanciesResolved DeliveryDiscrepancy[] @relation("DiscrepancyResolver")
   deliveryDiscrepancyEvents DeliveryDiscrepancyEvent[]
+  recoveryRequestsCreated DeliveryRecoveryAdjustment[] @relation("RecoveryRequestCreator")
+  recoveryRequestsReviewed DeliveryRecoveryAdjustment[] @relation("RecoveryRequestReviewer")
+  recoveryAdjustmentEvents DeliveryRecoveryAdjustmentEvent[]
 
   @@index([branchId, isActive])
   @@index([areaId, role, isActive])
@@ -1017,6 +1022,7 @@ model DeliveryDiscrepancy {
   stop DeliveryStop @relation(fields: [stopId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   resolvedBy User? @relation("DiscrepancyResolver", fields: [resolvedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
   events DeliveryDiscrepancyEvent[]
+  recoveryAdjustments DeliveryRecoveryAdjustment[]
   @@index([status, createdAt], map: "delivery_discrepancies_status_time_idx")
   @@map("delivery_discrepancies")
 }
@@ -1032,4 +1038,59 @@ model DeliveryDiscrepancyEvent {
   actor User @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   @@index([discrepancyId, createdAt], map: "delivery_discrepancy_events_case_time_idx")
   @@map("delivery_discrepancy_events")
+}
+
+// G7: only physically recovered missing goods may be added to branch stock.
+// Damaged or still-missing goods were never credited in G4; they are NOT adjusted again.
+// Each POSTED request has immutable lines and one inventory movement per SKU.
+model DeliveryRecoveryAdjustment {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  discrepancyId String    @map("discrepancy_id") @db.Uuid
+  branchId      String    @map("branch_id") @db.Uuid
+  submissionKey String    @unique @map("submission_key") @db.Uuid
+  status        String    @default("SUBMITTED") @db.VarChar(16)
+  evidence      String    @db.VarChar(500)
+  createdById   String    @map("created_by_id") @db.Uuid
+  reviewedById  String?   @map("reviewed_by_id") @db.Uuid
+  reviewNote    String?   @map("review_note") @db.VarChar(500)
+  reviewedAt    DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  discrepancy DeliveryDiscrepancy @relation(fields: [discrepancyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  branch      Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy   User                @relation("RecoveryRequestCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reviewedBy  User?               @relation("RecoveryRequestReviewer", fields: [reviewedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lines       DeliveryRecoveryAdjustmentItem[]
+  events      DeliveryRecoveryAdjustmentEvent[]
+
+  @@index([discrepancyId, status, createdAt], map: "delivery_recovery_adjustments_case_status_idx")
+  @@index([branchId, status, createdAt], map: "delivery_recovery_adjustments_branch_status_idx")
+  @@map("delivery_recovery_adjustments")
+}
+
+model DeliveryRecoveryAdjustmentItem {
+  adjustmentId String  @map("adjustment_id") @db.Uuid
+  ingredientId String  @map("ingredient_id") @db.Uuid
+  quantity     Decimal @db.Decimal(18, 6)
+
+  adjustment DeliveryRecoveryAdjustment @relation(fields: [adjustmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient               @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([adjustmentId, ingredientId])
+  @@map("delivery_recovery_adjustment_items")
+}
+
+model DeliveryRecoveryAdjustmentEvent {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  adjustmentId String    @map("adjustment_id") @db.Uuid
+  actorId      String    @map("actor_id") @db.Uuid
+  action       String    @db.VarChar(20)
+  note         String?   @db.VarChar(500)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  adjustment DeliveryRecoveryAdjustment @relation(fields: [adjustmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor      User                       @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([adjustmentId, createdAt], map: "delivery_recovery_events_adjustment_time_idx")
+  @@map("delivery_recovery_adjustment_events")
 }
