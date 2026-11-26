@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { AuthSession } from '../auth';
 import { kitchenApi, type KitchenAssignment } from '../kitchen/kitchen.api';
-import { distributionApi } from '../distribution/distribution.api';
 import { kitchenPlanningApi, type KitchenPlan, type KitchenAiOverlay, type OpsSummary,
-    type PlanningWarehouse, type PlanningBranch } from './kitchen-planning.api';
+    type PlanningWarehouse, type PlanningBranch, restockApprovalApi, type RestockPlanRecord } from './kitchen-planning.api';
 import './KitchenPlanningPage.css';
 
 const todayVN = () => {
@@ -34,6 +33,11 @@ export default function KitchenPlanningPage({ session, onOpenDistribution }: {
     const [assignments, setAssignments] = useState<KitchenAssignment[]>([]);
     const [courierId, setCourierId] = useState('');
     const [tripCode, setTripCode] = useState('');
+    const [reviewNote,setReviewNote] = useState('');
+    const [submissionNote,setSubmissionNote] = useState('');
+    const [plans,setPlans] = useState<RestockPlanRecord[]>([]);
+    const [submissionKey,setSubmissionKey] = useState<string|null>(null);
+    const [selectedPlan,setSelectedPlan] = useState<string|null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
     const [message, setMessage] = useState('');
@@ -41,7 +45,11 @@ export default function KitchenPlanningPage({ session, onOpenDistribution }: {
     const lock = useRef(false);
 
     const refresh = useCallback(async () => {
-        const [r, o] = await Promise.all([kitchenPlanningApi.reference(session), kitchenPlanningApi.operations(session, day)]);
+        const [r, o, saved] = await Promise.all([
+            kitchenPlanningApi.reference(session), kitchenPlanningApi.operations(session, day),
+            restockApprovalApi.list(session, day),
+        ]);
+        setPlans(saved.items);
         setWarehouses(r.warehouses); setBranches(r.branches); setOps(o.data);
         setWarehouseId(previous => previous || r.warehouses[0]?.id || '');
         setSelectedBranches(previous => previous.filter(id => r.branches.some(branch => branch.id === id)));
@@ -66,7 +74,7 @@ export default function KitchenPlanningPage({ session, onOpenDistribution }: {
     const toggleBranch = (id: string, checked: boolean) => {
         setSelectedBranches(previous => checked ? (previous.includes(id) || previous.length >= 10 ? previous : [...previous, id])
             : previous.filter(x => x !== id));
-        setPreview(null);
+        setPreview(null);setSubmissionKey(null);
     };
 
     async function calculate(event: FormEvent) {
@@ -79,39 +87,54 @@ export default function KitchenPlanningPage({ session, onOpenDistribution }: {
         } catch (cause) { setError(cause instanceof Error ? cause.message : 'Không thể tính kế hoạch.'); }
         finally { lock.current = false; setBusy(false); }
     }
-    async function createDraft() {
-        if (!admin || lock.current || uncertain || !preview || stale || !courierId || !codeValid.test(tripCode.trim().toUpperCase()) || !deliverable.length) {
-            setError('Chọn người giao, mã chuyến hợp lệ và tải kế hoạch mới nhất trước khi tạo.'); return;
-        }
-        if (overLimit) { setError('Một quầy có hơn 50 SKU; cần tách thành nhiều chuyến trong Điều phối G4.'); return; }
-        const grouped = new Map<string, { ingredientId: string; quantity: string }[]>();
-        for (const row of deliverable) grouped.set(row.destinationBranchId, [...(grouped.get(row.destinationBranchId) ?? []),
-            { ingredientId: row.ingredientId, quantity: row.proposedDeliveryQuantity }]);
-        if (!window.confirm(`Tạo chuyến G4 NHÁP cho ${grouped.size} quầy? Chưa trừ tồn hoặc xuất hàng. Nhân viên kho cần đối chiếu trước khi xuất chuyến.`)) return;
-        lock.current = true; setBusy(true); setError(''); setMessage('');
-        let postStarted = false;
+    async function submitProposal() {
+        if (lock.current || uncertain || !preview || stale || !deliverable.length || overLimit) return;
+        if (!window.confirm('Gửi đề xuất G6 để ADMIN xét duyệt? Sau khi gửi, các dòng hàng và số lượng sẽ được lưu thành bản ghi bất biến.')) return;
+        lock.current=true;setBusy(true);setError('');setMessage('');
+        // Reusing the same key on an uncertain retry prevents two proposals.
+        const key = submissionKey ?? crypto.randomUUID();
+        setSubmissionKey(key);
         try {
-            // Advisory results may be stale; refresh B7/kitchen stock before writing anything.
-            const checked = await kitchenPlanningApi.recommendations(session, warehouseId, preview.branchIds, day, false);
-            const original = preview.plan.recommendations.map(x => `${x.destinationBranchId}:${x.ingredientId}:${x.proposedDeliveryQuantity}`).sort();
-            const latest = checked.data.recommendations.map(x => `${x.destinationBranchId}:${x.ingredientId}:${x.proposedDeliveryQuantity}`).sort();
-            if (original.join('|') !== latest.join('|')) throw new Error('Tồn kho hoặc đề xuất đã thay đổi. Tải lại kế hoạch trước khi tạo chuyến.');
-            postStarted = true;
-            const result = await distributionApi.create(session, {
-                code: tripCode.trim().toUpperCase(), warehouseId, businessDate: day, courierId,
-                note: `G5 B7 xem trước ${day}; ADMIN duyệt lập chuyến nháp. Không tự động xuất kho.`,
-                stops: preview.branchIds.filter(id => grouped.has(id)).map(id => ({ branchId: id, items: grouped.get(id)! })),
+            const result = await restockApprovalApi.submit(session, {
+                submissionKey:key, warehouseId:preview.warehouseId, businessDate:preview.day,
+                branchIds:preview.branchIds,
+                expectedRows:deliverable.map(x=>({branchId:x.destinationBranchId,ingredientId:x.ingredientId,quantity:x.proposedDeliveryQuantity})),
+                note:submissionNote.trim(),
             });
-            setMessage(`Đã tạo chuyến NHÁP ${result.data.code}. Vào Điều phối giao hàng để kiểm tra trước khi xuất.`);
-            setPreview(null); setTripCode('');
-        } catch (cause) {
-            setError(cause instanceof Error ? cause.message : 'Không thể lưu chuyến.');
-            // A POST can commit before losing its response. Never retry before checking G4.
-            if (postStarted) setUncertain(true);
-        } finally { lock.current = false; setBusy(false); }
+            setSubmissionKey(null);setUncertain(false);setPreview(null);
+            setSelectedPlan(result.data.id);setMessage(`Đã gửi đề xuất ${result.data.id.slice(0,8)}; chờ ADMIN xét duyệt.`);
+            await refresh();
+        } catch(e) {
+            setUncertain(true);
+            setError(e instanceof Error?e.message:'Không gửi được đề xuất.');
+        } finally {lock.current=false;setBusy(false);}
+    }
+    async function reviewProposal(plan:RestockPlanRecord,decision:'APPROVED'|'REJECTED') {
+        if (!admin || lock.current || uncertain || plan.createdById===session.user.id) return;
+        if (decision==='REJECTED' && reviewNote.trim().length<8) {setError('Cần lý do từ chối từ 8 ký tự.');return;}
+        if (!window.confirm(`${decision==='APPROVED'?'Duyệt':'Từ chối'} đề xuất ${plan.id.slice(0,8)}?`)) return;
+        lock.current=true;setBusy(true);setError('');setMessage('');
+        try {
+            await restockApprovalApi.review(session,plan.id,decision,reviewNote);
+            setMessage('Đã ghi nhận quyết định và lịch sử phê duyệt.');setReviewNote('');await refresh();
+        } catch(e) {setUncertain(true);setError(e instanceof Error?e.message:'Lỗi xử lý duyệt.');}
+        finally {lock.current=false;setBusy(false);}
+    }
+    async function convertProposal(plan:RestockPlanRecord) {
+        if (!admin || lock.current || uncertain || plan.status!=='APPROVED' || !courierId || !codeValid.test(tripCode)) {
+            setError('Cần chuyến đã duyệt, mã chuyến và nhân viên kho hợp lệ.');return;
+        }
+        if (!window.confirm('Chuyển đề xuất đã duyệt thành chuyến G4 NHÁP? Bước này chưa xuất hàng, chưa giữ tồn.')) return;
+        lock.current=true;setBusy(true);setError('');setMessage('');
+        try {
+            const result=await restockApprovalApi.convert(session,plan.id,tripCode,courierId);
+            setMessage(`Đã tạo chuyến G4 NHÁP ${result.data.tripCode}. Kho cần kiểm tra trước khi xuất.`);
+            setTripCode('');await refresh();
+        } catch(e) {setUncertain(true);setError(e instanceof Error?e.message:'Chưa tạo được chuyến.');}
+        finally {lock.current=false;setBusy(false);}
     }
     return <section className="wh-g5">
-        <div className="wh-heading"><div><p className="wh-eyebrow">G5 / KẾ HOẠCH KHO BẾP</p><h2>Đề xuất bổ sung theo quầy</h2></div>
+        <div className="wh-heading"><div><p className="wh-eyebrow">G6 / KẾ HOẠCH & PHÊ DUYỆT</p><h2>Đề xuất bổ sung theo quầy</h2></div>
             <button type="button" disabled={busy} onClick={() => { void refresh().catch(cause => setError(String(cause))); }}>Làm mới số liệu</button></div>
         <p className="wh-intro">Dùng thuật toán B7 hiện có, nguồn cung là tồn kho bếp G3. Hàng G4 đã xuất nhưng chưa xác nhận được tính là đang về quầy. AI (nếu bật) chỉ hỗ trợ tham khảo, không đổi số lượng giao.</p>
         {ops && <div className="wh-g5-metrics">
@@ -123,10 +146,10 @@ export default function KitchenPlanningPage({ session, onOpenDistribution }: {
         </div>}
         {error && <p className="wh-error" role="alert">{error}</p>}
         {message && <p className="wh-g5-success" role="status">{message}</p>}
-        {uncertain && <div className="wh-note" role="alert">Có thể chuyến G4 đã được lưu dù không nhận được phản hồi. Hãy mở Điều phối giao hàng và tìm mã chuyến trước khi thử thao tác khác. <button type="button" onClick={onOpenDistribution}>Mở Điều phối</button></div>}
+        {uncertain && <div className="wh-note" role="alert">Yêu cầu có thể đã được ghi nhận dù phản hồi bị mất. Hãy tải lại đề xuất/chuyến trước khi thao tác khác. <button type="button" onClick={()=>{void refresh().then(()=>setUncertain(false)).catch(e=>setError(String(e)));}}>Đối chiếu trạng thái</button> <button type="button" onClick={onOpenDistribution}>Mở Điều phối</button></div>}
         <form onSubmit={event => { void calculate(event); }} className="wh-g5-form">
-            <label>Ngày giao buổi sáng<input type="date" required value={day} onChange={e => { setDay(e.target.value); setPreview(null); }} /></label>
-            <label>Kho nguồn<select required value={warehouseId} onChange={e => { setWarehouseId(e.target.value); setPreview(null); }}>
+            <label>Ngày giao buổi sáng<input type="date" required value={day} onChange={e => { setDay(e.target.value); setPreview(null);setSubmissionKey(null); }} /></label>
+            <label>Kho nguồn<select required value={warehouseId} onChange={e => { setWarehouseId(e.target.value); setPreview(null);setSubmissionKey(null); }}>
                 <option value="">Chọn kho</option>{warehouses.map(w => <option key={w.id} value={w.id}>{w.code} — {w.name}</option>)}
             </select></label>
             <fieldset><legend>Chọn tối đa 10 quầy ({selectedBranches.length}/10)</legend>
@@ -154,14 +177,42 @@ export default function KitchenPlanningPage({ session, onOpenDistribution }: {
             {!preview.plan.recommendations.length && <p>Chưa có SKU cần bổ sung dựa trên tồn quầy, tồn tối thiểu và dữ liệu B6 được duyệt.</p>}
             <p className="wh-g5-warning">Đây chưa phải phê duyệt tồn kho hoặc lệnh xuất hàng. Chuyến G4 nháp không giữ tồn; kho sẽ kiểm tra lại số lượng khi xuất.</p>
             {overLimit && <p className="wh-error">Có quầy vượt 50 SKU/chuyến G4. Vui lòng chia các chuyến thủ công trên trang Điều phối giao hàng.</p>}
-            {admin && <div className="wh-g5-approve"><h4>ADMIN xác nhận lập chuyến G4 nháp</h4>
-                <label>Mã chuyến (duy nhất)<input value={tripCode} maxLength={40} placeholder="G5-20261127-01" onChange={e => setTripCode(e.target.value.toUpperCase())} /></label>
-                <label>Người giao<select value={courierId} onChange={e => setCourierId(e.target.value)}>
-                    <option value="">Chọn nhân viên kho được phân công</option>{assignments.map(a => <option key={a.userId} value={a.userId}>{a.user.displayName}</option>)}
-                </select></label>
-                <button type="button" className="wh-primary" disabled={busy || stale || uncertain || overLimit || !deliverable.length || !courierId || !codeValid.test(tripCode)}
-                    onClick={() => { void createDraft(); }}>Xác nhận tạo chuyến G4 NHÁP</button>
-            </div>}
+            <div className="wh-g5-approve"><h4>G6 — Gửi kế hoạch để xét duyệt</h4>
+                <p>Bản kế hoạch được hệ thống tính lại trước khi lưu. ADMIN không được tự duyệt đề xuất do mình gửi.</p>
+                <label>Ghi chú đề xuất<textarea value={submissionNote} maxLength={500} onChange={e=>setSubmissionNote(e.target.value)} /></label>
+                <button type="button" className="wh-primary" disabled={busy||uncertain||stale||overLimit||!deliverable.length} onClick={()=>{void submitProposal();}}>Gửi đề xuất (SUBMITTED)</button>
+            </div>
         </div>}
+        <div className="wh-g5-preview">
+            <div className="wh-heading"><h3>Đề xuất đã gửi · {day}</h3><button type="button" disabled={busy} onClick={()=>{void refresh().then(()=>setUncertain(false)).catch(e=>setError(String(e)));}}>Tải lại lịch sử</button></div>
+            {plans.map(p=><article key={p.id} className="wh-g6-card">
+                <header><strong>{p.area.code} · {p.warehouse.code}</strong><span>{p.status} · {p.lines.length} SKU</span></header>
+                <p>Mã hồ sơ {p.id.slice(0,8)} · Gửi bởi {p.createdBy.displayName} · {p.businessDate.slice(0,10)}</p>
+                <button type="button" onClick={()=>setSelectedPlan(selectedPlan===p.id?null:p.id)}> {selectedPlan===p.id?'Thu gọn':'Chi tiết hồ sơ'} </button>
+                {selectedPlan===p.id && <div>
+                    <p>Ghi chú: {p.note||'—'} · Ý kiến duyệt: {p.reviewNote||'—'}</p>
+                    <div className="wh-g5-table"><table><thead><tr><th>Quầy</th><th>Nguyên liệu</th><th>Số lượng đề xuất</th></tr></thead><tbody>
+                        {p.lines.map(line=><tr key={`${line.branchId}/${line.ingredientId}`}><td>{line.branch.code}</td><td>{line.ingredient.name}</td><td>{line.quantity} {line.ingredient.unit}</td></tr>)}
+                    </tbody></table></div>
+                    {admin&&p.status==='SUBMITTED'&&p.createdById!==session.user.id&&<div className="wh-g6-review">
+                        <label>Ý kiến duyệt<textarea maxLength={500} value={reviewNote} onChange={e=>setReviewNote(e.target.value)} placeholder="Cần nhập lý do khi từ chối"/></label>
+                        <button type="button" disabled={busy||uncertain} onClick={()=>{void reviewProposal(p,'APPROVED');}}>Phê duyệt</button>
+                        <button type="button" disabled={busy||uncertain||reviewNote.trim().length<8} onClick={()=>{void reviewProposal(p,'REJECTED');}}>Từ chối</button>
+                    </div>}
+                    {admin&&p.status==='APPROVED'&&<div className="wh-g6-review">
+                        <p>Kho: {p.warehouse.name}. Chuyến DRAFT không giữ hàng và không xuất kho.</p>
+                        <label>Mã chuyến mới<input value={tripCode} maxLength={40} onChange={e=>setTripCode(e.target.value.toUpperCase())} placeholder="G6-20261127-01" /></label>
+                        <label>Nhân viên giao<select value={courierId} onChange={e=>setCourierId(e.target.value)}>
+                            <option value="">Chọn nhân viên kho</option>{assignments.map(a=><option key={a.userId} value={a.userId}>{a.user.displayName}</option>)}
+                        </select></label>
+                        {p.warehouseId!==warehouseId&&<p className="wh-g5-warning">Chọn đúng kho {p.warehouse.code} ở bộ lọc phía trên trước khi chọn nhân viên giao.</p>}
+                        <button type="button" disabled={busy||uncertain||p.warehouseId!==warehouseId||!courierId||!codeValid.test(tripCode)} onClick={()=>{void convertProposal(p);}}>Tạo chuyến G4 nháp từ đề xuất đã duyệt</button>
+                    </div>}
+                    {p.status==='CONVERTED'&&<p>Đã chuyển thành chuyến G4: {p.deliveryTripId}. <button type="button" onClick={onOpenDistribution}>Mở Điều phối</button></p>}
+                    <details><summary>Lịch sử duyệt ({p.events.length})</summary><ul>{p.events.map(e=><li key={e.id}>{new Date(e.createdAt).toLocaleString('vi-VN')}: {e.action} — {e.actor.displayName}. {e.note}</li>)}</ul></details>
+                </div>}
+            </article>)}
+            {!plans.length&&<p>Chưa có đề xuất cho ngày đã chọn.</p>}
+        </div>
     </section>;
 }

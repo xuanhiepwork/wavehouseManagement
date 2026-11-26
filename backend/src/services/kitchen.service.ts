@@ -55,7 +55,7 @@ export function parseHeader(value: unknown, hasSupplier: boolean) {
 
 export type KitchenLine = { ingredientId: string; quantity: string; unitCost?: string };
 
-export async function parseKitchenLines(prisma: PrismaClient, input: unknown, hasCost: boolean): Promise<KitchenLine[]> {
+export async function parseKitchenLines(prisma: PrismaClient | Prisma.TransactionClient, input: unknown, hasCost: boolean): Promise<KitchenLine[]> {
     if (!Array.isArray(input) || input.length < 1 || input.length > 50) {
         throw new KitchenError('Cần 1–50 nguyên liệu/thành phẩm trong chứng từ.', 400);
     }

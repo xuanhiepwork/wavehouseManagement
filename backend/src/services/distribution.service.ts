@@ -95,7 +95,7 @@ export async function getDistributionTrip(prisma: PrismaClient, actor: Distribut
     return { ...trip, stops: kitchen ? trip.stops : trip.stops.filter(stop => ids.includes(stop.branchId)) };
 }
 
-export async function createDistributionTrip(prisma: PrismaClient, actor: DistributionActor, input: unknown) {
+export async function createDistributionTrip(prisma: PrismaClient | Prisma.TransactionClient, actor: DistributionActor, input: unknown) {
     const body = readBody(input);
     if (!body || !onlyKeys(body, ['code', 'warehouseId', 'businessDate', 'courierId', 'note', 'stops']))
         throw new DistributionError('Dữ liệu chuyến giao không hợp lệ.', 400);
@@ -230,6 +230,14 @@ export async function receiveDistributionStop(prisma: PrismaClient, actor: Distr
             await tx.inventoryMovement.create({ data: {
                 branchId: stop.branchId, ingredientId: item.ingredientId, actorId: actor.id,
                 kind: 'TRANSFER_IN', sourceId: stop.id, delta: entry.received, quantityAfter: balance.quantity,
+            } });
+        }
+        if (hasDiscrepancy) {
+            // The case is recorded atomically with physical receiving and stock movements.
+            // The unique stopId forbids a second case if a response is lost and retried.
+            await tx.deliveryDiscrepancy.create({ data: {
+                stopId: stop.id,
+                events: { create: { actorId: actor.id, action: 'OPENED', note: memo } },
             } });
         }
         await tx.branch.update({ where: { id: stop.branchId }, data: {

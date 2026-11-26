@@ -37,3 +37,29 @@ export const kitchenPlanningApi = {
         apiRequest<{ data: OpsSummary }>(session,
             `/kitchen-planning/operations?businessDate=${encodeURIComponent(businessDate)}`),
 };
+
+// G6: saved decisions are independent from the read-only G5 B7/AI preview.
+export type RestockPlanRecord = {
+    id: string; areaId: string; warehouseId: string; businessDate: string; status: 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'CONVERTED';
+    note: string | null; createdAt: string; reviewedAt: string | null; reviewNote: string | null;
+    convertedAt: string | null; deliveryTripId: string | null; createdById: string; reviewedById: string | null;
+    area: { code: string; name: string }; warehouse: { code: string; name: string };
+    createdBy: { displayName: string }; reviewedBy: { displayName: string } | null;
+    lines: { branchId: string; ingredientId: string; quantity: string;
+        branch: { code: string; name: string }; ingredient: { code: string; name: string; unit: string } }[];
+    events: { id: string; action: string; note: string | null; createdAt: string;
+        actor: { displayName: string } }[];
+};
+export const restockApprovalApi = {
+    list: (session: AuthSession, businessDate: string) => apiRequest<{ items: RestockPlanRecord[] }>(session,
+        `/restock-approval/plans?businessDate=${encodeURIComponent(businessDate)}`),
+    submit: (session: AuthSession, input: { submissionKey: string; warehouseId: string; businessDate: string;
+        branchIds: string[]; expectedRows: { branchId: string; ingredientId: string; quantity: string }[]; note: string }) =>
+        apiRequest<{ data: RestockPlanRecord }>(session,'/restock-approval/plans', { method: 'POST', body: input }),
+    review: (session: AuthSession, id: string, decision: 'APPROVED' | 'REJECTED', note: string) =>
+        apiRequest<{ data: RestockPlanRecord }>(session,`/restock-approval/plans/${encodeURIComponent(id)}/review`,
+            { method: 'POST', body: { decision, note } }),
+    convert: (session: AuthSession, id: string, code: string, courierId: string) =>
+        apiRequest<{ data: { tripCode: string; tripId: string } }>(session,
+            `/restock-approval/plans/${encodeURIComponent(id)}/convert`, { method: 'POST', body: { code, courierId } }),
+};

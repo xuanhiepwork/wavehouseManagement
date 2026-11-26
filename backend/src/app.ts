@@ -30,6 +30,8 @@ import { createSchedulingRouter } from './routes/scheduling.routes';
 import { createKitchenRouter } from './routes/kitchen.routes';
 import { createDistributionRouter } from './routes/distribution.routes';
 import { createKitchenPlanningRouter } from './routes/kitchen-planning.routes';
+import { createRestockApprovalRouter } from './routes/restock-approval.routes';
+import { createDeliveryDiscrepancyRouter } from './routes/delivery-discrepancy.routes';
 import { createOperationalBranchRouter } from './routes/operational-branches.routes';
 
 // Explicit paths keep documentation working after TypeScript sources are compiled.
@@ -151,6 +153,8 @@ export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = ()
         app.use('/api/kitchen', guards.requireAuth, createKitchenRouter(options.authPrisma));
         app.use('/api/distribution', guards.requireAuth, createDistributionRouter(options.authPrisma));
         app.use('/api/kitchen-planning', guards.requireAuth, createKitchenPlanningRouter(options.authPrisma));
+        app.use('/api/restock-approval', guards.requireAuth, createRestockApprovalRouter(options.authPrisma));
+        app.use('/api/delivery-discrepancies', guards.requireAuth, createDeliveryDiscrepancyRouter(options.authPrisma));
         app.use('/api/operational-branches', guards.requireAuth, createOperationalBranchRouter(options.authPrisma));
 
         app.use(
