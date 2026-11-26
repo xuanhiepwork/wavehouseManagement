@@ -11,6 +11,15 @@ export type ForecastRequest = {
     shift: ForecastShift;
 };
 
+/** G5: same B7 demand logic, but supply comes from the G3 kitchen warehouse.
+ * This is an advisory preview; it never reserves, moves or posts inventory. */
+export type KitchenForecastRequest = {
+    sourceWarehouseId: string;
+    destinationBranchIds: string[];
+    businessDate: Date;
+    shift: ForecastShift;
+};
+
 export class ForecastError extends Error {
     constructor(
         message: string,
@@ -68,14 +77,12 @@ type Suggestion = {
 
 export async function buildRestockRecommendations(
     prisma: PrismaClient,
-    input: ForecastRequest
+    input: ForecastRequest | KitchenForecastRequest
 ) {
-    const {
-        sourceBranchId,
-        destinationBranchIds,
-        businessDate,
-        shift,
-    } = input;
+    const { destinationBranchIds, businessDate, shift } = input;
+    const kitchen = 'sourceWarehouseId' in input;
+    const sourceBranchId = 'sourceBranchId' in input ? input.sourceBranchId : null;
+    const sourceWarehouseId = 'sourceWarehouseId' in input ? input.sourceWarehouseId : null;
 
     const targetKey = dateKey(businessDate);
     const targetIndex = shiftIndex(businessDate, shift);
@@ -84,11 +91,11 @@ export async function buildRestockRecommendations(
     historyStart.setUTCDate(historyStart.getUTCDate() - 90);
 
     const allBranchIds = [
-        sourceBranchId,
+        ...(sourceBranchId ? [sourceBranchId] : []),
         ...destinationBranchIds,
     ];
 
-    const [branches, ingredients, balances, counts, overrides] =
+    const [branches, ingredients, balances, counts, overrides, warehouse, kitchenBalances, incoming] =
         await Promise.all([
             prisma.branch.findMany({
                 where: {
@@ -156,6 +163,18 @@ export async function buildRestockRecommendations(
                     dayType: true,
                 },
             }),
+            sourceWarehouseId ? prisma.warehouse.findFirst({
+                where: { id: sourceWarehouseId, isActive: true }, select: { id: true, code: true, name: true },
+            }) : Promise.resolve(null),
+            sourceWarehouseId ? prisma.warehouseInventoryBalance.findMany({
+                where: { warehouseId: sourceWarehouseId }, select: { ingredientId: true, quantity: true },
+            }) : Promise.resolve([]),
+            sourceWarehouseId ? prisma.deliveryStopItem.findMany({
+                where: { stop: { branchId: { in: destinationBranchIds }, status: 'DISPATCHED',
+                    trip: { status: 'IN_TRANSIT', businessDate: { lte: businessDate } } } },
+                select: { ingredientId: true, plannedQuantity: true, stop: { select: { branchId: true } } },
+                take: 10001,
+            }) : Promise.resolve([]),
         ]);
 
     if (branches.length !== allBranchIds.length) {
@@ -165,6 +184,12 @@ export async function buildRestockRecommendations(
         );
     }
 
+    if (sourceWarehouseId && !warehouse) {
+        throw new ForecastError('Kitchen warehouse unavailable', 409);
+    }
+    if (incoming.length > 10000) {
+        throw new ForecastError('Too many outstanding delivery lines', 413);
+    }
     if (ingredients.length > 500) {
         throw new ForecastError(
             'Too many ingredients for this planning request'
@@ -181,6 +206,13 @@ export async function buildRestockRecommendations(
             balance.quantity,
         ])
     );
+
+    const kitchenBalanceMap = new Map(kitchenBalances.map(row => [row.ingredientId, row.quantity]));
+    const incomingMap = new Map<string, Prisma.Decimal>();
+    for (const row of incoming) {
+        const key = balanceKey(row.stop.branchId, row.ingredientId);
+        incomingMap.set(key, (incomingMap.get(key) ?? ZERO).plus(row.plannedQuantity));
+    }
 
     const overrideMap = new Map(
         overrides.map(item => [
@@ -310,6 +342,11 @@ export async function buildRestockRecommendations(
             const onHand = balanceMap.get(
                 balanceKey(branchId, ingredient.id)
             ) ?? ZERO;
+            // G4 has already reduced warehouse stock for dispatched trips, but
+            // the branch will not hold it until receiving. Avoid a second plan.
+            const expectedIncoming = kitchen
+                ? (incomingMap.get(balanceKey(branchId, ingredient.id)) ?? ZERO)
+                : ZERO;
 
             // Cover the expected shift demand, a 20% buffer,
             // and the ingredient's configured minimum stock.
@@ -320,7 +357,7 @@ export async function buildRestockRecommendations(
             const places = ingredient.unit === 'piece' ? 0 : 6;
 
             const needed = nonNegative(
-                desired.minus(onHand)
+                desired.minus(onHand).minus(expectedIncoming)
             ).toDecimalPlaces(
                 places,
                 Prisma.Decimal.ROUND_CEIL
@@ -360,9 +397,9 @@ export async function buildRestockRecommendations(
             ZERO
         );
 
-        const sourceStock = balanceMap.get(
-            balanceKey(sourceBranchId, ingredient.id)
-        ) ?? ZERO;
+        const sourceStock = sourceWarehouseId
+            ? (kitchenBalanceMap.get(ingredient.id) ?? ZERO)
+            : (balanceMap.get(balanceKey(sourceBranchId!, ingredient.id)) ?? ZERO);
 
         const places = ingredient.unit === 'piece' ? 0 : 6;
         const step = ingredient.unit === 'piece'
@@ -421,17 +458,15 @@ export async function buildRestockRecommendations(
         }
     }
 
-    const sourceBranch = branchMap.get(sourceBranchId)!;
+    const sourceBranch = sourceBranchId ? branchMap.get(sourceBranchId)! : null;
 
     return {
         businessDate: targetKey,
         shift,
         dayType: targetDayType,
-        sourceBranch: {
-            id: sourceBranch.id,
-            code: sourceBranch.code,
-            name: sourceBranch.name,
-        },
+        ...(sourceBranch ? { sourceBranch: {
+            id: sourceBranch.id, code: sourceBranch.code, name: sourceBranch.name,
+        } } : { sourceWarehouse: warehouse! }),
         historyWindowDays: 90,
         safetyMultiplier: '1.20',
         recommendations: suggestions.map(row => ({
@@ -443,6 +478,8 @@ export async function buildRestockRecommendations(
             ingredientName: row.ingredientName,
             unit: row.unit,
             onHand: row.onHand.toFixed(6),
+            ...(kitchen ? { expectedIncomingQuantity:
+                (incomingMap.get(balanceKey(row.branchId, row.ingredientId)) ?? ZERO).toFixed(6) } : {}),
             predictedConsumption: row.forecast.toFixed(6),
             requestedQuantity: row.needed.toFixed(6),
             proposedDeliveryQuantity: row.allocated.toFixed(6),
@@ -460,6 +497,11 @@ export async function buildRestockRecommendations(
             'Consumption includes unexplained stock loss.',
             'Sparse history uses heuristic or minimum stock.',
             'Delivery times must follow branch shift schedules.',
+            ...(kitchen ? [
+                'G5 warehouse supply uses kitchen inventory, not a virtual source branch.',
+                'Undelivered G4 lines are counted as expected incoming, not confirmed branch stock.',
+                'DRAFT trips do not reserve kitchen inventory; dispatch rechecks available stock.',
+            ] : []),
         ],
     };
 }

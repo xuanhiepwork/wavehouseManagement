@@ -11,6 +11,7 @@ import { InventoryPage } from './inventory/InventoryPage';
 import WarehousePage from './warehouse/WarehousePage';
 import KitchenPage from './kitchen/KitchenPage';
 import DistributionPage from './distribution/DistributionPage';
+import KitchenPlanningPage from './kitchen-planning/KitchenPlanningPage';
 import AIAdvisoryPage from './ai4/AIAdvisoryPage';
 import RecipeEvidencePage from './ai5/RecipeEvidencePage';
 import SchedulingPage from './scheduling/SchedulingPage';
@@ -30,6 +31,7 @@ type Section =
     | 'inventory'
     | 'delivery'
     | 'planning'
+    | 'kitchen-planning'
     | 'ai-forecast'
     | 'ai-evidence'
     | 'catalog'
@@ -66,6 +68,7 @@ const navigation: NavItem[] = [
     { id: 'issues', label: 'Xuất kho', symbol: '↑', roles: everyone, detail: 'Phiếu xuất kho B5' },
     { id: 'transfers', label: 'Chuyển kho', symbol: '⇄', roles: everyone, detail: 'Phiếu chuyển kho và tình trạng nhận hàng' },
     { id: 'delivery', label: 'Điều phối giao hàng', symbol: '↗', roles: everyone, detail: 'Giao hàng từ kho trung tâm đến các quầy và xác nhận thực nhận' },
+    { id: 'kitchen-planning', label: 'Kế hoạch kho bếp G5', symbol: '◉', roles: managers, detail: 'Đề xuất giao kho trung tâm, đối chiếu B7 và G4' },
     { id: 'planning', label: 'Đề xuất bổ sung', symbol: '▥', roles: ['ADMIN'], detail: 'Dự báo theo chi nhánh, ca và loại ngày (B7)' },
     { id: 'ai-forecast', label: 'Dự báo AI', symbol: '✦', roles: ['ADMIN'], detail: 'So sánh AI2 và B7, khoảng bất định và cảnh báo dữ liệu' },
     { id: 'ai-evidence', label: 'Bằng chứng công thức AI', symbol: '✓', roles: ['ADMIN'], detail: 'Xác nhận công thức lịch sử cho báo cáo bán hàng đã duyệt' },
@@ -264,6 +267,7 @@ export default function WorkspaceApp() {
                         : <AreaDashboard session={session} onNavigate={navigate} />)}
                     {visited.has('kitchen') && <div hidden={selected.id !== 'kitchen'}><KitchenPage session={session} /></div>}
                     {visited.has('delivery') && <div hidden={selected.id !== 'delivery'}><DistributionPage session={session} /></div>}
+                    {visited.has('kitchen-planning') && <div hidden={selected.id !== 'kitchen-planning'}><KitchenPlanningPage session={session} onOpenDistribution={() => { navigate('delivery'); }} /></div>}
                     {visited.has('scheduling') && <div hidden={selected.id !== 'scheduling'}><SchedulingPage session={session} /></div>}
                     {visited.has('shift') && <div hidden={selected.id !== 'shift'}><ShiftStockCountPage session={session} {...forms.callbacks.shift} /></div>}
                     {visited.has('receiving') && <div hidden={selected.id !== 'receiving'}><ReceivingPage session={session} initialTransferId={receivingId} initialRequest={receivingRequest}
