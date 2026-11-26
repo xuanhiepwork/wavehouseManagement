@@ -1,4 +1,5 @@
 import type { AuthSession } from '../auth';
+import { listOperationalBranches } from '../operational-branches.api';
 import { apiRequest } from '../api';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -57,24 +58,15 @@ function parsePage<T>(value: unknown, page: number, parse: (row: Record<string, 
 }
 function query(session: AuthSession, branchId: string, page: number, ingredientId?: string): string {
     if (!UUID.test(branchId) || !Number.isSafeInteger(page) || page < 1 || (ingredientId && !UUID.test(ingredientId))) throw new Error('Bộ lọc kho không hợp lệ.');
-    if (session.user.role !== 'ADMIN' && branchId !== session.user.branchId) throw new Error('Chỉ được xem kho của chi nhánh được phân công.');
+    // G2: server checks assigned branches, not the old session.branchId.
     const params = new URLSearchParams({ branchId, page: String(page) });
     if (ingredientId) params.set('ingredientId', ingredientId);
     return params.toString();
 }
 
-export async function loadInventoryBranches(session: AuthSession, signal?: AbortSignal): Promise<InventoryBranch[]> {
-    if (session.user.role !== 'ADMIN') return [];
-    const result: InventoryBranch[] = [];
-    for (let page = 1; ; page++) {
-        const response = parsePage(await apiRequest<unknown>(session, `/branches?page=${page}`, { signal }), page, row => {
-            if (typeof row.isActive !== 'boolean') throw new Error('Trạng thái chi nhánh không hợp lệ.');
-            return { id: id(row.id), code: text(row.code), name: text(row.name), isActive: row.isActive };
-        });
-        result.push(...response.items);
-        if (page * INVENTORY_PAGE_SIZE >= response.total) return result;
-        if (!response.items.length) throw new Error('Danh sách chi nhánh bị thiếu trang. Vui lòng tải lại.');
-    }
+export async function loadInventoryBranches(session: AuthSession, _signal?: AbortSignal): Promise<InventoryBranch[]> {
+    const rows = await listOperationalBranches(session);
+    return rows.map(row => ({ id: row.id, code: row.code, name: row.name, isActive: row.isActive }));
 }
 
 export async function loadInventoryBalances(session: AuthSession, branchId: string, page: number, signal?: AbortSignal): Promise<InventoryPageResult<Balance>> {

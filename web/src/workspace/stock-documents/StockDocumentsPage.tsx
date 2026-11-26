@@ -97,7 +97,7 @@ export default function StockDocumentsPage({ session, kind, onDirtyChange, onWor
     const dirty = Boolean(selected || creating) && JSON.stringify(form) !== baseline;
     const needsAttention = dirty || Boolean(uncertain);
     const busy = working || loadingDetail;
-    const receivingAllowed = session.user.role === 'ADMIN' || Boolean(selected?.destinationBranchId && selected.destinationBranchId === session.user.branchId);
+    const receivingAllowed = session.user.role === 'ADMIN' || Boolean(selected?.destinationBranchId && branches.some(branch => branch.id === selected.destinationBranchId));
     const totalPages = Math.max(1, Math.ceil(result.total / 50));
     const ingredientById = new Map(ingredients.map(item => [item.id, item]));
     const balanceById = new Map(balances.map(item => [item.ingredientId, item]));
@@ -138,10 +138,7 @@ export default function StockDocumentsPage({ session, kind, onDirtyChange, onWor
         const controller = new AbortController();
         setBalances([]); setBalanceAt(''); setBalanceError('');
         if ((!selected && !creating) || !form.branchId) return () => controller.abort();
-        if (session.user.role !== 'ADMIN' && session.user.branchId !== form.branchId) {
-            setBalanceError('Tồn nguồn thuộc chi nhánh khác; tài khoản này không có quyền xem.');
-            return () => controller.abort();
-        }
+        // Backend validates the selected branch against area or today's assignment.
         void loadSourceBalances(session, form.branchId, controller.signal).then(value => {
             if (!controller.signal.aborted) { setBalances(value); setBalanceAt(new Date().toISOString()); }
         }).catch(failure => { if (!controller.signal.aborted) setBalanceError(message(failure)); });
@@ -174,7 +171,7 @@ export default function StockDocumentsPage({ session, kind, onDirtyChange, onWor
     function startNew() {
         if (!writer || busy || uncertain || (dirty && !window.confirm('Bỏ các thay đổi chưa lưu để tạo phiếu mới?'))) return;
         selectionRequest.current += 1;
-        const next = blankForm(session);
+        const next = { ...blankForm(session), branchId: branches.find(branch => branch.isActive)?.id ?? '' };
         setSelected(null); setCreating(true); setForm(next); setBaseline(JSON.stringify(next)); setAttemptedCode(''); setError(''); setNotice('');
     }
     function updateForm(values: Partial<Form>) { setForm(previous => ({ ...previous, ...values })); setNotice(''); }
@@ -186,7 +183,7 @@ export default function StockDocumentsPage({ session, kind, onDirtyChange, onWor
         const code = form.code.trim().toUpperCase();
         if (!/^[A-Z0-9][A-Z0-9_-]{2,39}$/.test(code)) throw new Error('Mã phiếu gồm 3–40 ký tự A–Z, 0–9, dấu gạch ngang hoặc gạch dưới.');
         if (!isDocumentId(form.branchId)) throw new Error('Chọn chi nhánh hợp lệ.');
-        if (session.user.role !== 'ADMIN' && form.branchId !== session.user.branchId) throw new Error('Chỉ được lập phiếu cho chi nhánh của bạn.');
+        if (!branches.some(branch => branch.id === form.branchId && branch.isActive)) throw new Error('Chi nhánh không nằm trong phạm vi thao tác được cấp quyền.');
         if (kind === 'transfer' && (!isDocumentId(form.destinationBranchId) || form.destinationBranchId === form.branchId)) throw new Error('Chọn chi nhánh nhận khác chi nhánh nguồn.');
         if (!metadataReady) throw new Error('Tải danh mục nguyên liệu trước khi lưu.');
         if (!form.items.length || form.items.length > 50) throw new Error('Phiếu phải có từ 1 đến 50 dòng nguyên liệu.');
@@ -276,8 +273,8 @@ export default function StockDocumentsPage({ session, kind, onDirtyChange, onWor
         <section className="w75-documents-panel" aria-label="Danh sách chứng từ">
             {listError && <p className="w75-documents-error" role="alert">{listError}</p>}
             <div className="w75-documents-controls">
-                {session.user.role === 'ADMIN' && <label>{kind === 'receipt' ? 'Chi nhánh' : 'Chi nhánh nguồn'}<select disabled={busy} value={filter.branchId ?? ''} onChange={event => { setPage(1); setFilter(previous => ({ ...previous, branchId: event.target.value || undefined })); }}><option value="">Tất cả chi nhánh</option>{branches.map(branch => <option key={branch.id} value={branch.id}>{branch.code} — {branch.name}{branch.isActive ? '' : ' (ngừng hoạt động)'}</option>)}</select></label>}
-                {kind === 'transfer' && session.user.role === 'ADMIN' && <label>Chi nhánh nhận<select disabled={busy} value={filter.destinationBranchId ?? ''} onChange={event => { setPage(1); setFilter(previous => ({ ...previous, destinationBranchId: event.target.value || undefined })); }}><option value="">Tất cả chi nhánh</option>{branches.map(branch => <option key={branch.id} value={branch.id}>{branch.code} — {branch.name}</option>)}</select></label>}
+                {branches.length > 0 && <label>{kind === 'receipt' ? 'Chi nhánh' : 'Chi nhánh nguồn'}<select disabled={busy} value={filter.branchId ?? ''} onChange={event => { setPage(1); setFilter(previous => ({ ...previous, branchId: event.target.value || undefined })); }}><option value="">Tất cả chi nhánh</option>{branches.map(branch => <option key={branch.id} value={branch.id}>{branch.code} — {branch.name}{branch.isActive ? '' : ' (ngừng hoạt động)'}</option>)}</select></label>}
+                {kind === 'transfer' && branches.length > 0 && <label>Chi nhánh nhận<select disabled={busy} value={filter.destinationBranchId ?? ''} onChange={event => { setPage(1); setFilter(previous => ({ ...previous, destinationBranchId: event.target.value || undefined })); }}><option value="">Tất cả chi nhánh</option>{branches.map(branch => <option key={branch.id} value={branch.id}>{branch.code} — {branch.name}</option>)}</select></label>}
                 {kind !== 'receipt' && <label>Trạng thái<select disabled={busy} value={filter.status ?? ''} onChange={event => { setPage(1); setFilter(previous => ({ ...previous, status: (event.target.value || undefined) as DocumentFilter['status'] })); }}><option value="">Tất cả</option><option value="DRAFT">Bản nháp</option><option value="POSTED">Đã ghi sổ</option><option value="CANCELLED">Đã hủy</option></select></label>}
                 <button type="button" disabled={busy || loadingList} onClick={() => setListRevision(value => value + 1)}>{loadingList ? 'Đang tải…' : 'Làm mới danh sách'}</button>
             </div>
@@ -300,7 +297,7 @@ export default function StockDocumentsPage({ session, kind, onDirtyChange, onWor
             <div className="w75-documents-heading"><div><h3>{creating ? 'Lập bản nháp mới' : `${selected?.code} · ${selected ? statuses[selected.status] : ''}`}</h3><p>{dirty ? 'Có thay đổi chưa lưu.' : 'Nội dung đang trùng với bản đã tải.'}</p></div>{selected && <button type="button" disabled={busy || Boolean(uncertain)} onClick={() => void openDocument(selected.id)}>Tải lại chi tiết</button>}</div>
             <fieldset disabled={!editable || busy || Boolean(uncertain)} className="w75-documents-fieldset">
                 <div className="w75-documents-grid"><label>Mã phiếu<input maxLength={40} value={form.code} disabled={!creating || Boolean(attemptedCode)} placeholder="VD: NK-20261121-001" onChange={event => updateForm({ code: event.target.value })} />{attemptedCode && <small>Giữ nguyên mã đã gửi để tránh tạo trùng sau lỗi kết nối.</small>}</label>
-                    <label>{kind === 'receipt' ? 'Chi nhánh nhập' : 'Chi nhánh nguồn'}{session.user.role === 'ADMIN' ? <select value={form.branchId} disabled={!creating} onChange={event => updateForm({ branchId: event.target.value })}><option value="">Chọn chi nhánh</option>{branches.map(branch => <option key={branch.id} value={branch.id} disabled={!branch.isActive}>{branch.code} — {branch.name}{branch.isActive ? '' : ' (ngừng hoạt động)'}</option>)}</select> : <input value={branchLabel(form.branchId)} readOnly />}</label>
+                    <label>{kind === 'receipt' ? 'Chi nhánh nhập' : 'Chi nhánh nguồn'}{branches.length > 0 ? <select value={form.branchId} disabled={!creating} onChange={event => updateForm({ branchId: event.target.value })}><option value="">Chọn chi nhánh</option>{branches.map(branch => <option key={branch.id} value={branch.id} disabled={!branch.isActive}>{branch.code} — {branch.name}{branch.isActive ? '' : ' (ngừng hoạt động)'}</option>)}</select> : <input value={branchLabel(form.branchId)} readOnly />}</label>
                     {kind === 'transfer' && <label>Chi nhánh nhận<select value={form.destinationBranchId} disabled={!creating} onChange={event => updateForm({ destinationBranchId: event.target.value })}><option value="">Chọn chi nhánh nhận</option>{branches.map(branch => <option key={branch.id} value={branch.id} disabled={!branch.isActive || branch.id === form.branchId}>{branch.code} — {branch.name}{branch.isActive ? '' : ' (ngừng hoạt động)'}</option>)}</select></label>}
                     {kind === 'receipt' && <label>Nhà cung cấp<input maxLength={160} value={form.supplierName} onChange={event => updateForm({ supplierName: event.target.value })} /></label>}
                 </div>

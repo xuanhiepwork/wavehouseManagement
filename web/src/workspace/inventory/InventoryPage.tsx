@@ -15,7 +15,7 @@ export function InventoryPage({ session }: Props) {
     const admin = session.user.role === 'ADMIN';
     const [branches, setBranches] = useState<InventoryBranch[]>([]);
     const [branchId, setBranchId] = useState(admin ? '' : session.user.branchId ?? '');
-    const [branchLoading, setBranchLoading] = useState(admin);
+    const [branchLoading, setBranchLoading] = useState(true);
     const [branchError, setBranchError] = useState('');
     const [branchReload, setBranchReload] = useState(0);
     const [view, setView] = useState<View>('balances');
@@ -30,14 +30,13 @@ export function InventoryPage({ session }: Props) {
     const latestKey = useRef(key); latestKey.current = key;
 
     useEffect(() => {
-        if (!admin) return;
         const controller = new AbortController();
         setBranchLoading(true); setBranchError('');
-        void loadInventoryBranches(session, controller.signal).then(items => { if (!controller.signal.aborted) setBranches(items); })
+        void loadInventoryBranches(session, controller.signal).then(items => { if (!controller.signal.aborted) { setBranches(items); setBranchId(current => items.some(item => item.id === current) ? current : (items[0]?.id ?? '')); } })
             .catch(cause => { if (!controller.signal.aborted) setBranchError(errorText(cause)); })
             .finally(() => { if (!controller.signal.aborted) setBranchLoading(false); });
         return () => controller.abort();
-    }, [session, admin, branchReload]);
+    }, [session, branchReload]);
 
     useEffect(() => {
         const sequence = ++requestSequence.current;
@@ -70,12 +69,12 @@ export function InventoryPage({ session }: Props) {
         <header><div><p className="w75-inventory-eyebrow">QUẢN LÝ KHO</p><h2>Tồn kho và biến động</h2>
             <p>Số dư hiện tại và lịch sử hạch toán theo chi nhánh. Mỗi trang tải tối đa 50 bản ghi từ máy chủ.</p></div></header>
         <div className="w75-inventory-panel">
-            {admin ? <label className="w75-inventory-branch">Chi nhánh
+            {branches.length > 0 ? <label className="w75-inventory-branch">Chi nhánh
                 <select value={branchId} disabled={branchLoading} onChange={event => { setBranchId(event.target.value); setPage(1); setIngredientFilter(null); }}>
                     <option value="">{branchLoading ? 'Đang tải chi nhánh…' : 'Chọn chi nhánh'}</option>
                     {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.code} · {branch.name}{branch.isActive ? '' : ' (ngừng hoạt động)'}</option>)}
                 </select></label>
-                : <p className="w75-inventory-note">Phạm vi: chi nhánh được phân công · {session.user.branchId ?? 'Chưa được phân công'}</p>}
+                : <p className="w75-inventory-note">Không có quầy được phân công hôm nay, hoặc chưa tải được danh sách.</p>}
             {branchError && <p className="w75-inventory-error" role="alert">{branchError} <button type="button" onClick={() => setBranchReload(value => value + 1)}>Tải lại chi nhánh</button></p>}
             <div className="w75-inventory-toolbar">
                 <div className="w75-inventory-tabs" role="group" aria-label="Loại dữ liệu kho">
@@ -86,7 +85,7 @@ export function InventoryPage({ session }: Props) {
             </div>
             {ingredientFilter && <p className="w75-inventory-note">Nguyên liệu: {ingredientFilter.label} <button type="button" onClick={() => { setIngredientFilter(null); setPage(1); }}>Xem mọi nguyên liệu</button></p>}
             {error && <p className="w75-inventory-error" role="alert">{error}</p>}
-            {!branchId && <p className="w75-inventory-empty">{admin ? 'Chọn chi nhánh để xem kho.' : 'Tài khoản chưa được gắn chi nhánh. Vui lòng liên hệ quản trị viên.'}</p>}
+            {!branchId && <p className="w75-inventory-empty">Chọn một quầy được cấp quyền để xem tồn kho.</p>}
             {loading && <p role="status" className="w75-inventory-note">Đang tải {view === 'balances' ? 'số dư kho' : 'lịch sử biến động'}…</p>}
             {!loading && data && <>
                 {view === 'balances' && <p className="w75-inventory-note">Ngưỡng tối thiểu và đơn vị lấy từ danh mục nguyên liệu hiện tại. Danh sách chỉ gồm nguyên liệu đã có bản ghi số dư; không suy diễn tồn bằng 0 cho bản ghi chưa tồn tại.</p>}

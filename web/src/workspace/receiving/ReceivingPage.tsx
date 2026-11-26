@@ -79,7 +79,7 @@ export default function ReceivingPage({ session, onUnsavedChange, onWorkingChang
                 return;
             }
             openedFromLink.current = requestKey;
-            if (session.user.role !== 'ADMIN' && data.transfer.destinationBranchId !== session.user.branchId) throw new Error('Phiếu không thuộc chi nhánh nhận của tài khoản.');
+            // G2: server verifies destination against today's scheduled branch/area.
             setBranchId(data.transfer.destinationBranchId); setSelectedId(initialTransferId); setDetailRevision(value => value + 1);
         }).catch(cause => { if (active) setError(message(cause)); });
         return () => { active = false; };
@@ -98,18 +98,17 @@ export default function ReceivingPage({ session, onUnsavedChange, onWorkingChang
     }, [dirty, working, pendingReconciliation]);
 
     useEffect(() => {
-        if (!isAdmin) return;
         let active = true;
         setBranchLoading(true);
         void getReceivingBranches(session).then(items => {
             if (!active) return;
             setBranches(items); setBranchError('');
             // An explicit incoming-transfer link determines its destination; do not race it with a default branch.
-            setBranchId(current => current || (initialTransferId ? '' : items[0]?.id || ''));
+            setBranchId(current => items.some(item => item.id === current) ? current : (initialTransferId ? '' : items[0]?.id || ''));
         }).catch(cause => { if (active) setBranchError(message(cause)); })
             .finally(() => { if (active) setBranchLoading(false); });
         return () => { active = false; };
-    }, [session, isAdmin]);
+    }, [session]);
 
     useEffect(() => {
         let active = true;
@@ -255,7 +254,7 @@ export default function ReceivingPage({ session, onUnsavedChange, onWorkingChang
         </div>
         <div className="w3-panel w3-controls">
             <div className="w3-field"><label htmlFor="w3-branch">Chi nhánh nhận hàng</label>
-                {isAdmin && branches.length ? <select id="w3-branch" value={branchId} disabled={working || branchLoading}
+                {branches.length ? <select id="w3-branch" value={branchId} disabled={working || branchLoading}
                     onChange={event => changeScope(() => { setBranchId(event.target.value); setPage(1); })}>
                     {branches.map(item => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
                 </select> : <input id="w3-branch" value={branchId} readOnly={!isAdmin} disabled={working || branchLoading}

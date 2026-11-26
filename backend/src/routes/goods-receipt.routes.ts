@@ -1,5 +1,6 @@
 
 import { Router, type RequestHandler, type Response } from 'express';
+import { canOperateBranch, type OperationalActor } from '../services/operational-access.service';
 import { Prisma, type PrismaClient } from '../generated/prisma/client';
 import {
     applyInventoryMovement,
@@ -13,11 +14,7 @@ import {
     prismaErrorCode,
 } from '../utils/admin-api';
 
-type Actor = {
-    id: string;
-    role: 'ADMIN' | 'BRANCH_MANAGER' | 'STAFF';
-    branchId: string | null;
-};
+type Actor = OperationalActor;
 
 type ReceiptLine = {
     ingredientId: string;
@@ -64,10 +61,14 @@ function actorOf(res: Response): Actor {
     return res.locals.authUser as Actor;
 }
 
-function scope(actor: Actor) {
-    return actor.role === 'ADMIN'
-        ? {}
-        : { branchId: actor.branchId! };
+function scope(actor: Actor): Prisma.GoodsReceiptWhereInput {
+    if (actor.role === 'ADMIN') return {};
+    if (actor.role === 'BRANCH_MANAGER') return actor.areaId
+        ? { branch: { areaId: actor.areaId } }
+        : { branchId: { in: actor.branchId ? [actor.branchId] : [] } };
+    // Area staff read inventory or transfer receipts, not supplier purchase records.
+    return !actor.areaId && actor.workKind !== 'KITCHEN_DELIVERY' && actor.branchId
+        ? { branchId: actor.branchId } : { id: { in: [] } };
 }
 
 function nullableText(
@@ -198,21 +199,10 @@ export function createGoodsReceiptRouter(prisma: PrismaClient) {
             return;
         }
 
-        if (
-            actor.role !== 'ADMIN' &&
-            requestedBranch &&
-            requestedBranch !== actor.branchId
-        ) {
-            res.status(403).json({ error: 'Forbidden' });
-            return;
-        }
 
         const where = {
             ...scope(actor),
-            ...(actor.role === 'ADMIN' &&
-                typeof requestedBranch === 'string'
-                ? { branchId: requestedBranch }
-                : {}),
+            ...(typeof requestedBranch === 'string' ? { branchId: requestedBranch.toLowerCase() } : {}),
         };
 
         try {
@@ -303,13 +293,11 @@ export function createGoodsReceiptRouter(prisma: PrismaClient) {
             return;
         }
 
-        if (
-            actor.role !== 'ADMIN' &&
-            actor.branchId !== branchId
-        ) {
-            res.status(403).json({ error: 'Forbidden' });
-            return;
-        }
+        try {
+            if (!(await canOperateBranch(prisma, actor, branchId))) {
+                res.status(403).json({ error: 'Branch outside managed area' }); return;
+            }
+        } catch { res.status(503).json({ error: 'Branch access temporarily unavailable' }); return; }
 
         try {
             const receipt = await prisma.$transaction(async tx => {

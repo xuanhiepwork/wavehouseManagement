@@ -1,5 +1,6 @@
 import type { AuthSession } from '../auth';
 import { ApiError, apiRequest, type ApiRequestOptions } from '../api';
+import { listOperationalBranches } from '../operational-branches.api';
 
 export type WorkShift = 'MORNING' | 'AFTERNOON' | 'EVENING';
 export type CountStatus = 'DRAFT' | 'SUBMITTED' | 'RETURNED' | 'APPROVED';
@@ -137,7 +138,7 @@ async function request(session: AuthSession, path: string, options: ApiRequestOp
 
 function assertBranch(session: AuthSession, branchId: string) {
     if (!UUID_PATTERN.test(branchId)) throw new Error('Mã chi nhánh không hợp lệ.');
-    if (session.user.role !== 'ADMIN' && session.user.branchId !== branchId) throw new Error('Chỉ được kiểm kê chi nhánh được phân công.');
+    // G2: Backend verifies exact assigned area, branch, business date and shift.
 }
 
 async function allPages(session: AuthSession, path: string): Promise<unknown[]> {
@@ -154,9 +155,10 @@ async function allPages(session: AuthSession, path: string): Promise<unknown[]> 
     }
 }
 
-export async function loadTemplate(session: AuthSession, branchId: string): Promise<IngredientLine[]> {
+export async function loadTemplate(session: AuthSession, branchId: string, businessDate?: string, shift?: WorkShift): Promise<IngredientLine[]> {
     assertBranch(session, branchId);
-    const response = await request(session, `/shift-stock-counts/template?branchId=${encodeURIComponent(branchId)}`);
+    const query = new URLSearchParams({ branchId, ...(businessDate ? { businessDate } : {}), ...(shift ? { shift } : {}) });
+    const response = await request(session, `/shift-stock-counts/template?${query.toString()}`);
     if (asObject(response)?.branchId !== branchId) throw new Error('Template trả về ngoài chi nhánh đã chọn.');
     const entries = extractArray(response, ['items', 'ingredients']);
     if (!entries) throw new Error('Template không chứa items/ingredients. Cần đối chiếu cấu trúc API B6.');
@@ -167,17 +169,9 @@ export async function loadTemplate(session: AuthSession, branchId: string): Prom
     return items;
 }
 
-export async function loadBranchList(session: AuthSession): Promise<BranchItem[]> {
-    if (session.user.role !== 'ADMIN') throw new Error('Chỉ quản trị viên được xem danh sách mọi chi nhánh.');
-    const rows = await allPages(session, '/branches');
-    const parsed = rows.map(value => {
-        const obj = asObject(value);
-        const item = { id: string(obj?.id), code: string(obj?.code), name: string(obj?.name) };
-        if (!UUID_PATTERN.test(item.id) || !item.code || !item.name) throw new Error('Danh sách chi nhánh không hợp lệ.');
-        return item;
-    });
-    if (new Set(parsed.map(item => item.id)).size !== parsed.length) throw new Error('Danh sách chi nhánh thay đổi trong lúc tải. Vui lòng tải lại.');
-    return parsed;
+export async function loadBranchList(session: AuthSession, businessDate?: string, shift?: WorkShift): Promise<BranchItem[]> {
+    const rows = await listOperationalBranches(session, businessDate, shift);
+    return rows.map(row => ({ id: row.id, code: row.code, name: row.name }));
 }
 
 export async function listCounts(session: AuthSession, branchId: string, filters?: { businessDate: string; shift: WorkShift }): Promise<ShiftCount[]> {

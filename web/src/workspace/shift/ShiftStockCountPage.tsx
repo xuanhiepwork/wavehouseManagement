@@ -128,7 +128,7 @@ export default function ShiftStockCountPage({ session, onDirtyChange, onWorkingC
     const alive = useRef(true);
     const callbacks = useRef({ onDirtyChange, onWorkingChange }); callbacks.current = { onDirtyChange, onWorkingChange };
     const loadedScope = useRef('');
-    const sessionScope = JSON.stringify([session.user.id, session.user.role, session.user.branchId]);
+    const sessionScope = JSON.stringify([session.user.id, session.user.role, session.user.branchId, session.user.areaId]);
 
     useEffect(() => {
         alive.current = true;
@@ -143,21 +143,20 @@ export default function ShiftStockCountPage({ session, onDirtyChange, onWorkingC
     }, []);
     useEffect(() => { callbacks.current.onDirtyChange?.(dirty); }, [dirty]);
     useEffect(() => { callbacks.current.onWorkingChange?.(working); }, [working]);
-    useEffect(() => { if (!isAdmin) setBranchId(session.user.branchId ?? ''); }, [isAdmin, session.user.branchId]);
+    // Area accounts choose the branch assigned for the selected business date and shift.
 
     useEffect(() => {
-        if (!isAdmin) return;
         let active = true;
-        void loadBranchList(sessionRef.current).then(list => {
+        void loadBranchList(sessionRef.current, businessDate, shift).then(list => {
             if (!active) return;
             setBranches(list);
-            if (list.length) setBranchId(current => current || list[0].id);
+            setBranchId(current => list.some(item => item.id === current) ? current : (list[0]?.id ?? ''));
         }).catch(() => {
             // Admin can still type a branch UUID when listing is not available.
         });
         return () => { active = false; };
-        // Branch list is only loaded when the signed-in user changes.
-    }, [sessionScope, isAdmin]);
+        // Server filters branch options by area and scheduled shift.
+    }, [sessionScope, businessDate, shift]);
 
     useEffect(() => {
         const scope = JSON.stringify([sessionScope, branchId, businessDate, shift]);
@@ -177,7 +176,7 @@ export default function ShiftStockCountPage({ session, onDirtyChange, onWorkingC
         setError('');
 
         void Promise.all([
-            loadTemplate(sessionRef.current, branchId),
+            loadTemplate(sessionRef.current, branchId, businessDate, shift),
             listCounts(sessionRef.current, branchId, { businessDate, shift }),
         ]).then(async ([template, counts]) => {
             const match = counts.find(row => row.branchId === branchId
@@ -311,14 +310,14 @@ export default function ShiftStockCountPage({ session, onDirtyChange, onWorkingC
             <div className="w2-panel w2-filters">
                 <div className="w2-field w2-branch-field">
                     <label htmlFor="w2-branch">Chi nhánh kiểm kê</label>
-                    {isAdmin && branches.length > 0 ? (
+                    {branches.length > 0 ? (
                         <select id="w2-branch" value={branchId} disabled={inProgress || dirty} onChange={event => setBranchId(event.target.value)}>
                             {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.code} — {branch.name}</option>)}
                         </select>
                     ) : isAdmin ? (
                         <input id="w2-branch" value={branchId} disabled={inProgress || dirty} placeholder="UUID chi nhánh" onChange={event => setBranchId(event.target.value.toLowerCase())} />
                     ) : (
-                        <input id="w2-branch" value={session.user.branchId ?? ''} readOnly aria-label="Chi nhánh được phân quyền" />
+                        <input id="w2-branch" value={branchId} readOnly aria-label="Chưa có quầy được phân công ở ca này" placeholder="Chưa được phân ca tại quầy" />
                     )}
                     {branchLabel && <span className="w2-helper">{branchLabel.name}</span>}
                 </div>

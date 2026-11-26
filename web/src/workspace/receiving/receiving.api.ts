@@ -1,5 +1,6 @@
 import type { AuthSession } from '../auth';
 import { sessionFetch } from '../api';
+import { listOperationalBranches } from '../operational-branches.api';
 
 export type BranchOption = { id: string; code: string; name: string };
 export type ReceiptStatus = 'DRAFT' | 'CONFIRMED';
@@ -203,15 +204,8 @@ function transferSummary(raw: unknown): TransferSummary {
         receipt: node.transferReceipt === null ? null : receiptSummary(node.transferReceipt) };
 }
 export async function getReceivingBranches(session: AuthSession): Promise<BranchOption[]> {
-    const result: BranchOption[] = [];
-    for (let page = 1; page <= 100; page++) {
-        const payload = object(await request(session, '/branches?page=' + page));
-        const items = array(payload.items).map(branch);
-        result.push(...items);
-        if (result.length >= integer(payload.total)) return result;
-        if (!items.length) throw new ReceivingApiError('Phân trang chi nhánh không đầy đủ.');
-    }
-    throw new ReceivingApiError('Danh sách chi nhánh vượt giới hạn tải. Cần thu hẹp phạm vi.');
+    const rows = await listOperationalBranches(session);
+    return rows.map(row => ({ id: row.id, code: row.code, name: row.name }));
 }
 export async function listPostedTransfers(session: AuthSession, destinationBranchId: string, page: number, filter: ReceivingFilter): Promise<ReceivingPageResult> {
     if (!UUID.test(destinationBranchId)) throw new ReceivingApiError('Hãy chọn chi nhánh hợp lệ.');

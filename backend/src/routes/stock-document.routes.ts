@@ -1,5 +1,6 @@
 
 import { Router, type RequestHandler, type Response } from 'express';
+import { canOperateBranch, operationalBranchIds, type OperationalActor } from '../services/operational-access.service';
 import { Prisma, type PrismaClient } from '../generated/prisma/client';
 import { createStockTransferReceiptRouter } from './transfer-receipt.routes';
 import { lockReceivingBranches, ReceivingGuardError, isReceivingTransactionConflict } from '../services/receiving-guard.service';
@@ -17,11 +18,7 @@ import {
 
 type Kind = 'ISSUE' | 'TRANSFER';
 
-type Actor = {
-    id: string;
-    role: 'ADMIN' | 'BRANCH_MANAGER' | 'STAFF';
-    branchId: string | null;
-};
+type Actor = OperationalActor;
 
 type Line = {
     ingredientId: string;
@@ -67,25 +64,26 @@ function actorOf(res: Response): Actor {
     return res.locals.authUser as Actor;
 }
 
-function readableScope(actor: Actor, kind: Kind) {
+function readableScope(actor: Actor, kind: Kind, staffBranches: string[] = []): Prisma.StockDocumentWhereInput {
     if (actor.role === 'ADMIN') return {};
-
-    if (kind === 'TRANSFER') {
-        return {
-            OR: [
-                { sourceBranchId: actor.branchId! },
-                { destinationBranchId: actor.branchId! },
-            ],
-        };
+    if (actor.role === 'BRANCH_MANAGER') {
+        if (actor.areaId) return kind === 'TRANSFER'
+            ? { OR: [{ sourceBranch: { areaId: actor.areaId } }, { destinationBranch: { areaId: actor.areaId } }] }
+            : { sourceBranch: { areaId: actor.areaId } };
+        return kind === 'TRANSFER'
+            ? { OR: [{ sourceBranchId: actor.branchId }, { destinationBranchId: actor.branchId }] }
+            : { sourceBranchId: actor.branchId! };
     }
-
-    return { sourceBranchId: actor.branchId! };
+    if (actor.areaId && actor.workKind === 'SALES') return kind === 'TRANSFER'
+        ? { destinationBranchId: { in: staffBranches } } : { sourceBranchId: { in: staffBranches } };
+    if (actor.areaId || actor.workKind === 'KITCHEN_DELIVERY' || !actor.branchId) return { id: { in: [] } };
+    return kind === 'TRANSFER' ? { destinationBranchId: actor.branchId } : { sourceBranchId: actor.branchId };
 }
-
-function writableScope(actor: Actor) {
-    return actor.role === 'ADMIN'
-        ? {}
-        : { sourceBranchId: actor.branchId! };
+function writableScope(actor: Actor): Prisma.StockDocumentWhereInput {
+    if (actor.role === 'ADMIN') return {};
+    if (actor.role !== 'BRANCH_MANAGER') return { id: { in: [] } };
+    return actor.areaId ? { sourceBranch: { areaId: actor.areaId } }
+        : { sourceBranchId: { in: actor.branchId ? [actor.branchId] : [] } };
 }
 
 function parseLines(value: unknown): Line[] | null {
@@ -238,19 +236,13 @@ export function createStockDocumentRouter(
             return;
         }
 
-        if (filter !== undefined && actor.role !== 'ADMIN') {
-            res.status(403).json({ error: 'Forbidden' });
-            return;
-        }
 
-        if (typeof destination === 'string' && actor.role !== 'ADMIN' && destination.toLowerCase() !== actor.branchId) {
-            res.status(403).json({ error: 'Forbidden' });
-            return;
-        }
-
+        let staffBranches: string[] = [];
+        try { if (actor.role === 'STAFF') staffBranches = await operationalBranchIds(prisma, actor); }
+        catch { res.status(503).json({ error: 'Branch scope unavailable' }); return; }
         const where: Prisma.StockDocumentWhereInput = {
             type: kind,
-            ...readableScope(actor, kind),
+            ...readableScope(actor, kind, staffBranches),
             ...(typeof filter === 'string'
                 ? { sourceBranchId: filter }
                 : {}),
@@ -303,11 +295,12 @@ export function createStockDocumentRouter(
         const actor = actorOf(res);
 
         try {
+            const staffBranches = actor.role === 'STAFF' ? await operationalBranchIds(prisma, actor) : [];
             const document = await prisma.stockDocument.findFirst({
                 where: {
                     id,
                     type: kind,
-                    ...readableScope(actor, kind),
+                    ...readableScope(actor, kind, staffBranches),
                 },
                 select: documentSelect,
             });
@@ -390,13 +383,11 @@ export function createStockDocumentRouter(
 
         const actor = actorOf(res);
 
-        if (
-            actor.role !== 'ADMIN' &&
-            actor.branchId !== sourceBranchId
-        ) {
-            res.status(403).json({ error: 'Forbidden' });
-            return;
-        }
+        try {
+            if (!(await canOperateBranch(prisma, actor, sourceBranchId))) {
+                res.status(403).json({ error: 'Source branch outside managed area' }); return;
+            }
+        } catch { res.status(503).json({ error: 'Branch access temporarily unavailable' }); return; }
 
         try {
             const document = await prisma.$transaction(async tx => {

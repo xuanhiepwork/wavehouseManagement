@@ -1,5 +1,6 @@
 import type { AuthSession } from '../auth';
 import { ApiError, apiRequest } from '../api';
+import { listOperationalBranches } from '../operational-branches.api';
 
 export type DocumentKind = 'receipt' | 'issue' | 'transfer';
 export type DocumentStatus = 'DRAFT' | 'POSTED' | 'CANCELLED';
@@ -59,9 +60,8 @@ function document(value: unknown, detail = false): StockDocument {
 export async function listDocuments(session: AuthSession, kind: DocumentKind, page: number, filter: DocumentFilter = {}, signal?: AbortSignal): Promise<DocumentPage> {
     const query = new URLSearchParams({ page: String(page) });
     if (filter.branchId) {
-        if (session.user.role === 'ADMIN') query.set(kind === 'receipt' ? 'branchId' : 'sourceBranchId', filter.branchId);
-        else if (kind === 'transfer' || filter.branchId !== session.user.branchId) throw new ApiError('Bộ lọc chi nhánh nguồn này chỉ dành cho ADMIN.', 403);
-        // A manager's issue/receipt scope already equals their own branch. The B5 API rejects any non-admin sourceBranchId query.
+        if (!isDocumentId(filter.branchId)) throw new Error('Chi nhánh lọc không hợp lệ.');
+        query.set(kind === 'receipt' ? 'branchId' : 'sourceBranchId', filter.branchId);
     }
     if (kind === 'transfer' && filter.destinationBranchId) query.set('destinationBranchId', filter.destinationBranchId);
     if (kind !== 'receipt' && filter.status) query.set('status', filter.status);
@@ -156,25 +156,9 @@ export async function loadDocumentIngredients(session: AuthSession, signal?: Abo
     }
     return [...result.values()].sort((a, b) => a.code.localeCompare(b.code));
 }
-export async function loadDocumentBranches(session: AuthSession, signal?: AbortSignal): Promise<BranchOption[]> {
-    if (session.user.role !== 'ADMIN') return [];
-    const result: BranchOption[] = [];
-    const seen = new Set<string>();
-    let page = 1;
-    for (;;) {
-        const value = await apiRequest<unknown>(session, `/branches?page=${page}`, { signal });
-        if (!object(value) || !Array.isArray(value.items) || !integer(value.total) || value.page !== page) return malformed();
-        guardPage(value.items.length, page, value.total, 50);
-        for (const raw of value.items) {
-            if (!object(raw) || !isDocumentId(raw.id) || typeof raw.code !== 'string' || typeof raw.name !== 'string' || typeof raw.isActive !== 'boolean') return malformed();
-            const id = raw.id.toLowerCase();
-            if (seen.has(id)) return malformed();
-            seen.add(id);
-            result.push({ id: raw.id, code: raw.code, name: raw.name, isActive: raw.isActive });
-        }
-        if (page * 50 >= value.total) return result;
-        page += 1;
-    }
+export async function loadDocumentBranches(session: AuthSession, _signal?: AbortSignal): Promise<BranchOption[]> {
+    const rows = await listOperationalBranches(session);
+    return rows.map(row => ({ id: row.id, code: row.code, name: row.name, isActive: row.isActive }));
 }
 export async function loadSourceBalances(session: AuthSession, branchId: string, signal?: AbortSignal): Promise<SourceBalance[]> {
     if (!isDocumentId(branchId)) return [];

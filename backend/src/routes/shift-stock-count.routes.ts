@@ -1,5 +1,6 @@
 
 import { Router, type RequestHandler, type Response } from 'express';
+import { canOperateBranch, isWorkShift, type OperationalActor } from '../services/operational-access.service';
 import { Prisma, type PrismaClient } from '../generated/prisma/client';
 import { captureStockCountRevisions, assertStockCountRevisions, ReceivingGuardError, isReceivingTransactionConflict } from '../services/receiving-guard.service';
 import {
@@ -14,11 +15,7 @@ import {
     prismaErrorCode,
 } from '../utils/admin-api';
 
-type Actor = {
-    id: string;
-    role: 'ADMIN' | 'BRANCH_MANAGER' | 'STAFF';
-    branchId: string | null;
-};
+type Actor = OperationalActor;
 
 type CountLine = {
     ingredientId: string;
@@ -69,35 +66,29 @@ function actorOf(res: Response): Actor {
     return res.locals.authUser as Actor;
 }
 
-function scope(actor: Actor) {
-    return actor.role === 'ADMIN'
-        ? {}
-        : { branchId: actor.branchId! };
+function scope(actor: Actor): Prisma.ShiftStockCountWhereInput {
+    if (actor.role === 'ADMIN') return {};
+    if (actor.role === 'BRANCH_MANAGER') return actor.areaId
+        ? { branch: { areaId: actor.areaId } }
+        : { branchId: { in: actor.branchId ? [actor.branchId] : [] } };
+    if (actor.workKind === 'KITCHEN_DELIVERY') return { id: { in: [] } };
+    // Area STAFF cannot use the legacy branchId as a bypass.
+    if (actor.areaId) return { createdById: actor.id };
+    return { branchId: { in: actor.branchId ? [actor.branchId] : [] } };
 }
 
-function resolveBranch(
-    actor: Actor,
-    value: unknown
-): string | null {
-    if (actor.role === 'ADMIN') {
-        return typeof value === 'string' && UUID_RE.test(value)
-            ? value.toLowerCase()
-            : null;
+function resolveBranch(actor: Actor, value: unknown): string | null {
+    if (typeof value === 'string' && UUID_RE.test(value)) return value.toLowerCase();
+    if (value !== undefined) return null;
+    // Backwards-compatible branch fallback for users not yet migrated.
+    return actor.areaId ? null : actor.branchId;
+}
+
+async function assertShiftAccess(tx: Prisma.TransactionClient, actor: Actor,
+    branchId: string, date: Date, shift: 'MORNING' | 'AFTERNOON' | 'EVENING') {
+    if (!(await canOperateBranch(tx, actor, branchId, date, shift))) {
+        throw new CountError('Không có lịch làm tại quầy/ca này hoặc ngoài khu vực', 403);
     }
-
-    if (!actor.branchId) return null;
-
-    if (value !== undefined) {
-        if (
-            typeof value !== 'string' ||
-            !UUID_RE.test(value) ||
-            value.toLowerCase() !== actor.branchId
-        ) {
-            return null;
-        }
-    }
-
-    return actor.branchId;
 }
 
 function parseDate(value: unknown): Date | null {
@@ -318,6 +309,15 @@ export function createShiftStockCountRouter(
         }
 
         try {
+            const actor = actorOf(res);
+            const day = req.query.businessDate === undefined ? undefined : parseDate(req.query.businessDate);
+            const requestedShift = req.query.shift;
+            if (day === null || (requestedShift !== undefined && !isWorkShift(requestedShift))) {
+                res.status(400).json({ error: 'Invalid date or shift' }); return;
+            }
+            if (!(await canOperateBranch(prisma, actor, branchId, day ?? undefined, isWorkShift(requestedShift) ? requestedShift : undefined))) {
+                res.status(403).json({ error: 'No assignment for this branch/shift' }); return;
+            }
             const ingredients = await prisma.ingredient.findMany({
                 where: {
                     OR: [
@@ -384,25 +384,12 @@ export function createShiftStockCountRouter(
             return;
         }
 
-        if (
-            actor.role !== 'ADMIN' &&
-            filter !== undefined &&
-            filter.toLowerCase() !== actor.branchId
-        ) {
-            res.status(403).json({ error: 'Forbidden' });
-            return;
-        }
 
         const where: Prisma.ShiftStockCountWhereInput = {
             ...scope(actor),
             ...(dateFilter ? { businessDate: dateFilter } : {}),
             ...(shiftFilter === 'MORNING' || shiftFilter === 'AFTERNOON' || shiftFilter === 'EVENING' ? { shift: shiftFilter } : {}),
-            ...(
-                actor.role === 'ADMIN' &&
-                    typeof filter === 'string'
-                    ? { branchId: filter.toLowerCase() }
-                    : {}
-            ),
+            ...(typeof filter === 'string' ? { branchId: filter.toLowerCase() } : {}),
         };
 
         try {
@@ -515,6 +502,7 @@ export function createShiftStockCountRouter(
                     throw new CountError('Branch unavailable');
                 }
 
+                await assertShiftAccess(tx, actor, branchId, date, shift);
                 await validateCoverage(tx, branchId, items);
 
                 return tx.shiftStockCount.create({
@@ -575,7 +563,7 @@ export function createShiftStockCountRouter(
                         ...scope(actor),
                         status: { in: ['DRAFT', 'RETURNED'] },
                     },
-                    select: { branchId: true },
+                    select: { branchId: true, businessDate: true, shift: true },
                 });
 
                 if (!existing) {
@@ -583,6 +571,8 @@ export function createShiftStockCountRouter(
                         'Count unavailable for editing'
                     );
                 }
+
+                await assertShiftAccess(tx, actor, existing.branchId, existing.businessDate, existing.shift);
 
                 if (items) {
                     await validateCoverage(
@@ -654,6 +644,8 @@ export function createShiftStockCountRouter(
                     },
                     select: {
                         branchId: true,
+                        businessDate: true,
+                        shift: true,
                         items: {
                             select: {
                                 ingredientId: true,
@@ -669,6 +661,7 @@ export function createShiftStockCountRouter(
                     );
                 }
 
+                await assertShiftAccess(tx, actor, current.branchId, current.businessDate, current.shift);
                 const revisions = await captureStockCountRevisions(tx, current.branchId);
 
                 const lines: CountLine[] = current.items.map(item => ({
@@ -843,6 +836,7 @@ export function createShiftStockCountRouter(
                     },
                     select: {
                         branchId: true,
+                        createdById: true,
                         submittedAt: true,
                         submittedReceivingRevision: true,
                         submittedInventoryRevision: true,
@@ -868,6 +862,7 @@ export function createShiftStockCountRouter(
                     );
                 }
 
+                if (current.createdById === actor.id) throw new CountError('Người lập phiếu không được tự duyệt', 403);
                 await assertStockCountRevisions(tx, current.branchId, current.submittedReceivingRevision, current.submittedInventoryRevision);
 
                 // No incoming/outgoing stock movement is allowed

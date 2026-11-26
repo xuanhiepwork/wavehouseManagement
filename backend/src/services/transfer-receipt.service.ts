@@ -2,7 +2,7 @@ import { Prisma, type PrismaClient } from '../generated/prisma/client';
 import { onlyKeys, readBody, UUID_RE } from '../utils/admin-api';
 import { lockReceivingBranches } from './receiving-guard.service';
 
-export type ReceivingActor = { id: string; role: 'ADMIN' | 'BRANCH_MANAGER' | 'STAFF'; branchId: string | null };
+export type ReceivingActor = { id: string; role: 'ADMIN' | 'BRANCH_MANAGER' | 'STAFF'; branchId: string | null; permittedReceivingBranchIds?: string[] };
 export class TransferReceiptError extends Error {
     constructor(message: string, public readonly status: number, public readonly code: string) { super(message); }
 }
@@ -121,7 +121,7 @@ export function parseReceivingInput(raw: unknown, mode: 'create' | 'update' | 'c
 }
 
 function destinationScope(actor: ReceivingActor) {
-    return actor.role === 'ADMIN' ? {} : { destinationBranchId: actor.branchId! };
+    return actor.role === 'ADMIN' ? {} : { destinationBranchId: { in: actor.permittedReceivingBranchIds ?? [] } };
 }
 async function loadTransfer(tx: Prisma.TransactionClient, actor: ReceivingActor, id: string, writing = false): Promise<Transfer> {
     const transfer = await tx.stockDocument.findFirst({
@@ -240,7 +240,7 @@ export function createTransferReceiptService(prisma: PrismaClient) {
             }, { ...receivingTxOptions, isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
         },
         async list(actor: ReceivingActor, query: { page: number; destinationBranchId?: string; status?: 'DRAFT' | 'CONFIRMED' }) {
-            if (actor.role !== 'ADMIN' && query.destinationBranchId && query.destinationBranchId !== actor.branchId) {
+            if (actor.role !== 'ADMIN' && query.destinationBranchId && !(actor.permittedReceivingBranchIds ?? []).includes(query.destinationBranchId)) {
                 throw new TransferReceiptError('Forbidden', 403, 'RECEIVING_FORBIDDEN');
             }
             const where: Prisma.TransferReceiptWhereInput = {

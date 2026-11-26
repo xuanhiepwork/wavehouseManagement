@@ -1,12 +1,9 @@
 import { Router } from 'express';
+import { canOperateBranch, type OperationalActor } from '../services/operational-access.service';
 import type { PrismaClient } from '../generated/prisma/client';
 import { UUID_RE, readPage } from '../utils/admin-api';
 
-type AuthUser = {
-    id: string;
-    role: 'ADMIN' | 'BRANCH_MANAGER' | 'STAFF';
-    branchId: string | null;
-};
+type AuthUser = OperationalActor;
 
 // Keep metadata tied to the ingredient referenced by each persisted balance or
 // movement. Clients must not infer units or minimum stock from display labels.
@@ -22,51 +19,26 @@ const ingredientSelect = {
 export function createInventoryRouter(prisma: PrismaClient) {
     const router = Router();
 
-    router.use((req, res, next) => {
+    router.use(async (req, res, next) => {
         const actor = res.locals.authUser as AuthUser | undefined;
-        const requestedBranch = req.query.branchId;
-
-        if (!actor) {
-            res.status(401).json({ error: 'Unauthorized' });
-            return;
+        const requested = req.query.branchId;
+        if (!actor) { res.status(401).json({ error: 'Unauthorized' }); return; }
+        if (requested !== undefined && (typeof requested !== 'string' || !UUID_RE.test(requested))) {
+            res.status(400).json({ error: 'Invalid branch ID' }); return;
         }
-
-        if (
-            requestedBranch !== undefined &&
-            (
-                typeof requestedBranch !== 'string' ||
-                !UUID_RE.test(requestedBranch)
-            )
-        ) {
-            res.status(400).json({ error: 'Invalid branch ID' });
-            return;
-        }
-
-        if (actor.role === 'ADMIN') {
-            if (!requestedBranch) {
-                res.status(400).json({
-                    error: 'branchId is required for ADMIN',
-                });
-                return;
+        // Area accounts must explicitly select their operational branch.
+        const branchId = typeof requested === 'string' ? requested.toLowerCase() :
+            (!actor.areaId ? actor.branchId : null);
+        if (!branchId) { res.status(400).json({ error: 'branchId is required' }); return; }
+        try {
+            if (!(await canOperateBranch(prisma, actor, branchId))) {
+                res.status(403).json({ error: 'Branch not assigned or outside managed area' }); return;
             }
-
-            res.locals.inventoryBranchId = requestedBranch;
-        } else {
-            if (
-                !actor.branchId ||
-                (
-                    requestedBranch &&
-                    requestedBranch !== actor.branchId
-                )
-            ) {
-                res.status(403).json({ error: 'Forbidden' });
-                return;
-            }
-
-            res.locals.inventoryBranchId = actor.branchId;
+            res.locals.inventoryBranchId = branchId;
+            next();
+        } catch {
+            res.status(503).json({ error: 'Inventory access temporarily unavailable' });
         }
-
-        next();
     });
 
     // GET /api/inventory/balances?branchId=<uuid>&page=1

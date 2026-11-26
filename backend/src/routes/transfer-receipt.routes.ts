@@ -1,4 +1,5 @@
 import { Router, type Response } from 'express';
+import { operationalBranchIds, type OperationalActor } from '../services/operational-access.service';
 import { onlyKeys, prismaErrorCode, readPage, UUID_RE } from '../utils/admin-api';
 import type { PrismaClient } from '../generated/prisma/client';
 import { createTransferReceiptService, parseReceivingInput, TransferReceiptError, type ReceivingActor } from '../services/transfer-receipt.service';
@@ -16,15 +17,22 @@ function errorResponse(res: Response, error: unknown) {
         res.status(503).json({ error: 'Receiving database unavailable' });
     }
 }
-function receivingRouter() {
+function receivingRouter(prisma: PrismaClient) {
     const router = Router();
-    router.use((_req, res, next) => {
-        const actor = actorOf(res);
-        if (!actor) { res.status(401).json({ error: 'Unauthorized' }); return; }
-        if (!['ADMIN', 'BRANCH_MANAGER', 'STAFF'].includes(actor.role) || (actor.role !== 'ADMIN' && !actor.branchId)) {
+    router.use(async (_req, res, next) => {
+        const actor = actorOf(res) as ReceivingActor & OperationalActor;
+        if (!actor || !['ADMIN', 'BRANCH_MANAGER', 'STAFF'].includes(actor.role)) {
             res.status(403).json({ error: 'Forbidden' }); return;
         }
-        next();
+        try {
+            actor.permittedReceivingBranchIds = await operationalBranchIds(prisma, actor);
+            if (actor.role !== 'ADMIN' && !actor.permittedReceivingBranchIds.length) {
+                res.status(403).json({ error: 'No assigned receiving branch today' }); return;
+            }
+            next();
+        } catch {
+            res.status(503).json({ error: 'Receiving branch access unavailable' });
+        }
     });
     return router;
 }
@@ -34,7 +42,7 @@ function idOf(value: unknown): string {
 }
 
 export function createStockTransferReceiptRouter(prisma: PrismaClient) {
-    const router = receivingRouter();
+    const router = receivingRouter(prisma);
     const service = createTransferReceiptService(prisma);
     router.get('/:id/receipt', async (req, res) => {
         try { res.json({ data: await service.get(actorOf(res), idOf(req.params.id)) }); }
@@ -50,7 +58,7 @@ export function createStockTransferReceiptRouter(prisma: PrismaClient) {
 }
 
 export function createTransferReceiptRouter(prisma: PrismaClient) {
-    const router = receivingRouter();
+    const router = receivingRouter(prisma);
     const service = createTransferReceiptService(prisma);
     router.get('/', async (req, res) => {
         try {
@@ -64,7 +72,7 @@ export function createTransferReceiptRouter(prisma: PrismaClient) {
                 throw new TransferReceiptError('Invalid receiving status', 400, 'INVALID_QUERY');
             }
             const actor = actorOf(res);
-            if (actor.role !== 'ADMIN' && destinationBranchId && destinationBranchId !== actor.branchId) {
+            if (actor.role !== 'ADMIN' && destinationBranchId && !(actor.permittedReceivingBranchIds ?? []).includes(destinationBranchId)) {
                 res.status(403).json({ error: 'Forbidden' }); return;
             }
             res.json(await service.list(actor, { page,
