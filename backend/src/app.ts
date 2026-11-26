@@ -33,6 +33,8 @@ import { createKitchenPlanningRouter } from './routes/kitchen-planning.routes';
 import { createRestockApprovalRouter } from './routes/restock-approval.routes';
 import { createDeliveryDiscrepancyRouter } from './routes/delivery-discrepancy.routes';
 import { createDeliveryReconciliationRouter } from './routes/delivery-reconciliation.routes';
+import { createStockWriteOffRouter } from './routes/stock-writeoff.routes';
+import { createStockAuditRouter } from './routes/stock-audit.routes';
 import { createOperationalBranchRouter } from './routes/operational-branches.routes';
 
 // Explicit paths keep documentation working after TypeScript sources are compiled.
@@ -157,6 +159,8 @@ export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = ()
         app.use('/api/restock-approval', guards.requireAuth, createRestockApprovalRouter(options.authPrisma));
         app.use('/api/delivery-discrepancies', guards.requireAuth, createDeliveryDiscrepancyRouter(options.authPrisma));
         app.use('/api/delivery-reconciliation', guards.requireAuth, createDeliveryReconciliationRouter(options.authPrisma));
+        app.use('/api/stock-writeoffs', guards.requireAuth, createStockWriteOffRouter(options.authPrisma));
+        app.use('/api/stock-audit', guards.requireAuth, createStockAuditRouter(options.authPrisma));
         app.use('/api/operational-branches', guards.requireAuth, createOperationalBranchRouter(options.authPrisma));
 
         app.use(

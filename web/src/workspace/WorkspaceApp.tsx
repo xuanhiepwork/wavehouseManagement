@@ -14,6 +14,8 @@ import DistributionPage from './distribution/DistributionPage';
 import KitchenPlanningPage from './kitchen-planning/KitchenPlanningPage';
 import DeliveryDiscrepanciesPage from './kitchen-planning/DeliveryDiscrepanciesPage';
 import DeliveryReconciliationPage from './kitchen-planning/DeliveryReconciliationPage';
+import StockWriteOffPage from './stock-writeoffs/StockWriteOffPage';
+import StockAuditPage from './stock-audit/StockAuditPage';
 import AIAdvisoryPage from './ai4/AIAdvisoryPage';
 import RecipeEvidencePage from './ai5/RecipeEvidencePage';
 import SchedulingPage from './scheduling/SchedulingPage';
@@ -36,6 +38,8 @@ type Section =
     | 'kitchen-planning'
     | 'delivery-discrepancies'
     | 'delivery-reconciliation'
+    | 'stock-writeoffs'
+    | 'stock-audit'
     | 'ai-forecast'
     | 'ai-evidence'
     | 'catalog'
@@ -75,6 +79,8 @@ const navigation: NavItem[] = [
     { id: 'kitchen-planning', label: 'Kế hoạch & duyệt G6', symbol: '◉', roles: managers, detail: 'Gửi, duyệt và chuyển đề xuất bổ sung từ kho bếp' },
     { id: 'delivery-discrepancies', label: 'Chênh lệch giao nhận G6', symbol: '⚑', roles: managers, detail: 'Phân loại và kết luận hàng giao thiếu/hỏng có lịch sử' },
     { id: 'delivery-reconciliation', label: 'Đối soát & thu hồi G7', symbol: '≋', roles: managers, detail: 'Đối soát giao thiếu và phê duyệt ghi nhận hàng tìm thấy' },
+    { id: 'stock-writeoffs', label: 'Hao hụt & hủy hàng G8', symbol: '⊖', roles: everyone, detail: 'Đề xuất ghi giảm quầy/kho bếp; ADMIN khác phê duyệt' },
+    { id: 'stock-audit', label: 'Đối soát tồn kho G9', symbol: '≡', roles: managers, detail: 'Đối soát tồn kho bếp, tồn quầy, giao nhận và hao hụt' },
     { id: 'planning', label: 'Đề xuất bổ sung', symbol: '▥', roles: ['ADMIN'], detail: 'Dự báo theo chi nhánh, ca và loại ngày (B7)' },
     { id: 'ai-forecast', label: 'Dự báo AI', symbol: '✦', roles: ['ADMIN'], detail: 'So sánh AI2 và B7, khoảng bất định và cảnh báo dữ liệu' },
     { id: 'ai-evidence', label: 'Bằng chứng công thức AI', symbol: '✓', roles: ['ADMIN'], detail: 'Xác nhận công thức lịch sử cho báo cáo bán hàng đã duyệt' },
@@ -207,7 +213,7 @@ export default function WorkspaceApp() {
         if (!session || forms.working || logoutLock.current || !navigation.some(item => item.id === section && item.roles.includes(session.user.role) &&
             !(session.user.role === 'STAFF' && session.user.workKind === 'KITCHEN_DELIVERY' &&
             ['sales', 'reconciliation', 'scheduling', 'shift'].includes(item.id)) &&
-            !(session.user.role === 'STAFF' && session.user.workKind !== 'KITCHEN_DELIVERY' && item.id === 'kitchen'))) return false;
+            !(session.user.role === 'STAFF' && session.user.workKind !== 'KITCHEN_DELIVERY' && ['kitchen', 'stock-writeoffs'].includes(item.id)))) return false;
         setActive(section);
         setVisited(previous => new Set(previous).add(section));
         if (section === 'planning' || section === 'delivery') setWarehouseMode(section);
@@ -223,7 +229,7 @@ export default function WorkspaceApp() {
     const isCentralStaff = session.user.role === 'STAFF' && session.user.workKind === 'KITCHEN_DELIVERY';
     const allowed = navigation.filter(item => item.roles.includes(session.user.role) &&
         !(isCentralStaff && ['sales', 'reconciliation', 'scheduling', 'shift'].includes(item.id)) &&
-        !(session.user.role === 'STAFF' && !isCentralStaff && item.id === 'kitchen'));
+        !(session.user.role === 'STAFF' && !isCentralStaff && ['kitchen', 'stock-writeoffs'].includes(item.id)));
     const selected = allowed.find(item => item.id === active) ?? allowed[0];
     async function logout() {
         if (logoutLock.current || forms.working || (forms.dirty && !window.confirm('Có dữ liệu chưa lưu hoặc kết quả ghi cần đối chiếu. Đăng xuất sẽ đóng các biểu mẫu đang mở. Bạn đã lưu/sao lưu và muốn đăng xuất?'))) return;
@@ -276,6 +282,8 @@ export default function WorkspaceApp() {
                     {visited.has('kitchen-planning') && <div hidden={selected.id !== 'kitchen-planning'}><KitchenPlanningPage session={session} onOpenDistribution={() => { navigate('delivery'); }} /></div>}
                     {visited.has('delivery-discrepancies') && <div hidden={selected.id !== 'delivery-discrepancies'}><DeliveryDiscrepanciesPage session={session} /></div>}
                     {visited.has('delivery-reconciliation') && <div hidden={selected.id !== 'delivery-reconciliation'}><DeliveryReconciliationPage session={session} /></div>}
+                    {visited.has('stock-writeoffs') && <div hidden={selected.id !== 'stock-writeoffs'}><StockWriteOffPage session={session} /></div>}
+                    {visited.has('stock-audit') && <div hidden={selected.id !== 'stock-audit'}><StockAuditPage session={session} /></div>}
                     {visited.has('scheduling') && <div hidden={selected.id !== 'scheduling'}><SchedulingPage session={session} /></div>}
                     {visited.has('shift') && <div hidden={selected.id !== 'shift'}><ShiftStockCountPage session={session} {...forms.callbacks.shift} /></div>}
                     {visited.has('receiving') && <div hidden={selected.id !== 'receiving'}><ReceivingPage session={session} initialTransferId={receivingId} initialRequest={receivingRequest}
