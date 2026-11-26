@@ -10,7 +10,7 @@ export function createDashboardRouter(prisma: PrismaClient) {
     router.use((_req, res, next) => {
         const actor = res.locals.authUser as SalesActor | undefined;
         if (!actor) { res.status(401).json({ error: 'Unauthorized' }); return; }
-        if (!['ADMIN', 'BRANCH_MANAGER'].includes(actor.role) || (actor.role !== 'ADMIN' && !actor.branchId)) {
+        if (!['ADMIN', 'BRANCH_MANAGER'].includes(actor.role)) {
             res.status(403).json({ error: 'Management access required', code: 'FORBIDDEN' }); return;
         }
         next();

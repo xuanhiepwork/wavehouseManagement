@@ -36,19 +36,26 @@ export function createAuthGuards(
                     id: true,
                     role: true,
                     branchId: true,
+                    areaId: true,
+                    workKind: true,
                     isActive: true,
                     branch: { select: { isActive: true } },
+                    area: { select: { isActive: true } },
                 },
             });
 
-            if (
-                !user ||
-                !user.isActive ||
-                (
-                    user.role !== 'ADMIN' &&
-                    (!user.branchId || !user.branch?.isActive)
-                )
-            ) {
+            // Area-based users are first-class accounts. Branch scope remains
+            // available only as legacy compatibility for routes not yet migrated.
+            const usable = user?.role === 'ADMIN' ||
+                (user?.role === 'BRANCH_MANAGER' && (
+                    (!!user.areaId && !!user.area?.isActive) || (!!user.branchId && !!user.branch?.isActive)
+                )) ||
+                (user?.role === 'STAFF' && (
+                    (user.workKind === 'SALES' && !!user.areaId && !!user.area?.isActive) ||
+                    user.workKind === 'KITCHEN_DELIVERY' ||
+                    (!!user.branchId && !!user.branch?.isActive)
+                ));
+            if (!user || !user.isActive || !usable) {
                 sessions.delete(token);
                 res.status(401).json({ error: 'Unauthorized' });
                 return;
@@ -57,7 +64,9 @@ export function createAuthGuards(
             res.locals.authUser = {
                 id: user.id,
                 role: user.role,
-                branchId: user.branchId,
+                branchId: user.branch?.isActive ? user.branchId : null,
+                areaId: user.areaId,
+                workKind: user.workKind,
             };
 
             next();

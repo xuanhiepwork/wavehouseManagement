@@ -17,9 +17,8 @@ export function createAuthService(prisma: PrismaClient) {
             const user = await prisma.user.findUnique({
                 where: { email: normalizedEmail },
                 include: {
-                    branch: {
-                        select: { isActive: true },
-                    },
+                    branch: { select: { isActive: true } },
+                    area: { select: { isActive: true } },
                 },
             });
 
@@ -27,12 +26,15 @@ export function createAuthService(prisma: PrismaClient) {
                 return null;
             }
 
-            if (
-                user.role !== 'ADMIN' &&
-                (!user.branchId || !user.branch?.isActive)
-            ) {
+            if (user.role === 'BRANCH_MANAGER' &&
+                !((user.areaId && user.area?.isActive) || (user.branchId && user.branch?.isActive))) {
                 return null;
             }
+            if (user.role === 'STAFF' && !(
+                (user.workKind === 'SALES' && user.areaId && user.area?.isActive) ||
+                user.workKind === 'KITCHEN_DELIVERY' ||
+                (user.branchId && user.branch?.isActive)
+            )) return null;
 
             const passwordValid = await verifyPassword(
                 user.passwordHash,
@@ -48,7 +50,9 @@ export function createAuthService(prisma: PrismaClient) {
                 email: user.email,
                 displayName: user.displayName,
                 role: user.role,
-                branchId: user.branchId,
+                branchId: user.branch?.isActive ? user.branchId : null,
+                areaId: user.areaId,
+                workKind: user.workKind,
             };
         },
     };

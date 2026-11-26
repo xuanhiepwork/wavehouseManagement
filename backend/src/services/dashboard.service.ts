@@ -89,23 +89,36 @@ const latest = (dates: (Date | null)[]): string | null => {
 export function createDashboardService(db: PrismaClient) {
     return {
         async summary(actor: SalesActor, query: DashboardQuery) {
-            if (!['ADMIN', 'BRANCH_MANAGER'].includes(actor.role) || (actor.role === 'BRANCH_MANAGER' && !actor.branchId)) {
+            if (!['ADMIN', 'BRANCH_MANAGER'].includes(actor.role)) {
                 throw new DashboardError('Management access required', 403, 'FORBIDDEN');
             }
-            if (actor.role === 'BRANCH_MANAGER' && query.branchId && query.branchId !== actor.branchId) {
-                // Reject before checking existence, so no foreign-branch metadata is disclosed.
-                throw new DashboardError('Forbidden branch', 403, 'FORBIDDEN');
-            }
-            const branchId = actor.role === 'ADMIN' ? query.branchId : actor.branchId!;
             return db.$transaction(async tx => {
                 await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+                // Always re-read the current role and area from PostgreSQL.
+                const user = await tx.user.findUnique({ where: { id: actor.id }, select: {
+                    role: true, areaId: true, isActive: true,
+                    area: { select: { isActive: true } },
+                } });
+                if (!user?.isActive || !['ADMIN', 'BRANCH_MANAGER'].includes(user.role) ||
+                    (user.role === 'BRANCH_MANAGER' && (!user.areaId || !user.area?.isActive))) {
+                    throw new DashboardError('Management area access required', 403, 'FORBIDDEN');
+                }
+                const branchId = query.branchId;
                 const clock = await tx.$queryRaw<{ asOf: Date }[]>`SELECT transaction_timestamp() AS "asOf"`;
                 const asOf = clock[0]?.asOf.toISOString();
                 if (!asOf) return integrity();
-                const branches = await tx.branch.findMany({ where: branchId ? { id: branchId } : {}, select: branchSelect,
+                const whereBranches: Prisma.BranchWhereInput = {
+                    ...(branchId ? { id: branchId } : {}),
+                    ...(user.role === 'BRANCH_MANAGER' ? { areaId: user.areaId! } : {}),
+                };
+                const branches = await tx.branch.findMany({ where: whereBranches, select: branchSelect,
                     orderBy: [{ code: 'asc' }, { id: 'asc' }], take: limits.branches + 1 });
                 bounded(branches.length, limits.branches);
-                if (branchId && !branches.length) throw new DashboardError('Branch not found', 404, 'DASHBOARD_BRANCH_NOT_FOUND');
+                if (branchId && !branches.length) throw new DashboardError(
+                    user.role === 'BRANCH_MANAGER' ? 'Forbidden branch' : 'Branch not found',
+                    user.role === 'BRANCH_MANAGER' ? 403 : 404,
+                    user.role === 'BRANCH_MANAGER' ? 'FORBIDDEN' : 'DASHBOARD_BRANCH_NOT_FOUND'
+                );
                 const branchIds = branches.map(b => b.id);
                 const from = dateKey(query.from); const to = dateKey(query.to);
                 const businessDate = { gte: query.from, lte: query.to };

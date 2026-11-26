@@ -118,6 +118,15 @@ export function createSalesApi(token: string) {
             if (!object(payload) || !Array.isArray(payload.items) || !integer(payload.page) || !integer(payload.total)) return malformed();
             return { items: payload.items.map(report), page: payload.page, total: payload.total };
         },
+        async workContext(businessDate: string): Promise<{ branches: SalesBranch[]; assignments: { branchId: string; shift: SalesShift }[] }> {
+            const payload = await request(`/sales-reports/work-context?${new URLSearchParams({ businessDate })}`);
+            if (!object(payload) || !Array.isArray(payload.branches) || !Array.isArray(payload.assignments) ||
+                !payload.branches.every(b => object(b) && uuid(b.id) && typeof b.name === 'string' && typeof b.isActive === 'boolean') ||
+                !payload.assignments.every(a => object(a) && uuid(a.branchId) && ['MORNING','AFTERNOON','EVENING'].includes(String(a.shift)))) {
+                return malformed();
+            }
+            return payload as { branches: SalesBranch[]; assignments: { branchId: string; shift: SalesShift }[] };
+        },
         get: (id: string) => detail(idPath(id)),
         create: (input: SalesInput) => detail('/sales-reports', 'POST', input),
         update: (id: string, input: SalesInput, expectedVersion: number) => detail(idPath(id), 'PATCH', { ...input, expectedVersion }),

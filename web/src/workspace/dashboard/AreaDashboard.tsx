@@ -93,7 +93,7 @@ function RestockPlanner({ session, branches, branchError, onReloadBranches }: { 
 
 function ManagementDashboard({ session, onNavigate }: Props) {
     const isAdmin = session.user.role === 'ADMIN';
-    const [filters, setFilters] = useState<DashboardFilters>(() => ({ ...defaultDateRange(), branchId: isAdmin ? '' : session.user.branchId ?? '' }));
+    const [filters, setFilters] = useState<DashboardFilters>(() => ({ ...defaultDateRange(), branchId: '' }));
     const [branches, setBranches] = useState<DashboardBranch[]>([]);
     const [branchError, setBranchError] = useState('');
     const [branchReload, setBranchReload] = useState(0);
@@ -104,17 +104,16 @@ function ManagementDashboard({ session, onNavigate }: Props) {
     const [inventoryFilter, setInventoryFilter] = useState('ALL');
     const [inventorySearch, setInventorySearch] = useState('');
     const sequence = useRef(0);
-    const requestKey = JSON.stringify({ ...filters, branchId: isAdmin ? filters.branchId : session.user.branchId });
+    const requestKey = JSON.stringify(filters);
     const rangeError = dateRangeError(filters.from, filters.to);
     const data = !rangeError && result?.key === requestKey ? result.data : null;
     useEffect(() => {
-        if (!isAdmin) return;
         const controller = new AbortController(); let active = true;
         setBranchError('');
         void loadDashboardBranches(session, controller.signal).then(rows => { if (active) setBranches(rows); })
             .catch(cause => { if (active) setBranchError(errorText(cause)); });
         return () => { active = false; controller.abort(); };
-    }, [session, isAdmin, branchReload]);
+    }, [session, branchReload]);
     useEffect(() => {
         const request = ++sequence.current;
         const controller = new AbortController();
@@ -145,13 +144,14 @@ function ManagementDashboard({ session, onNavigate }: Props) {
         ['Thu ròng ghi nhận', formatMoney(kpis?.netRecorded)], ['Số đồ uống đã bán', formatQuantity(kpis?.beveragesSold)],
     ];
     return <section className="w6-root w74-root" aria-label="Dashboard quản lý">
-        <div className="w6-head"><div><p className="w6-eyebrow">WAVEHOUSE / TỔNG QUAN</p><h2>{isAdmin ? 'Dashboard quản lý khu vực' : 'Dashboard chi nhánh'}</h2>
+        <div className="w6-head"><div><p className="w6-eyebrow">WAVEHOUSE / TỔNG QUAN</p><h2>{isAdmin ? 'Dashboard toàn hệ thống' : 'Dashboard khu vực'}</h2>
             <p>Doanh thu chính thức từ báo cáo đã duyệt; theo dõi kiểm kê, nhận hàng và tồn nguyên liệu từ server.</p>
-            {isAdmin && <a className="w74-planning-link" href="#w74-restock">Lập kế hoạch bổ sung B7 ↓</a>}</div><span className="w6-mode">{isAdmin ? 'TOÀN HỆ THỐNG / CHI NHÁNH' : 'CHI NHÁNH ĐƯỢC PHÂN CÔNG'}</span></div>
-        <div className="w6-panel w6-filters"><label>Chi nhánh{isAdmin ? <select value={filters.branchId} onChange={e => setFilters(v => ({ ...v, branchId: e.target.value }))}>
-            <option value="">Tất cả chi nhánh</option>{filters.branchId && !branches.some(b => b.id === filters.branchId) && <option value={filters.branchId}>{filters.branchId}</option>}
-            {branches.map(b => <option value={b.id} key={b.id}>{b.code} — {b.name}{b.isActive ? '' : ' (ngừng hoạt động)'}</option>)}</select>
-            : <input readOnly aria-label="Chi nhánh được phân công" value={data?.scope.branches[0]?.name ?? session.user.branchId ?? 'Chưa phân công'} />}</label>
+            {isAdmin && <a className="w74-planning-link" href="#w74-restock">Lập kế hoạch bổ sung B7 ↓</a>}</div><span className="w6-mode">{isAdmin ? 'TOÀN HỆ THỐNG / CHI NHÁNH' : 'CÁC QUẦY THUỘC KHU VỰC'}</span></div>
+        <div className="w6-panel w6-filters"><label>Quầy<select value={filters.branchId} onChange={e => setFilters(v => ({ ...v, branchId: e.target.value }))}>
+            <option value="">{isAdmin ? 'Tất cả chi nhánh' : 'Tất cả quầy trong khu vực'}</option>
+            {filters.branchId && !branches.some(b => b.id === filters.branchId) && <option value={filters.branchId}>{filters.branchId}</option>}
+            {branches.map(b => <option value={b.id} key={b.id}>{b.code} — {b.name}{b.isActive ? '' : ' (ngừng hoạt động)'}</option>)}
+        </select></label>
             <label>Từ ngày<input type="date" value={filters.from} onChange={e => setFilters(v => ({ ...v, from: e.target.value }))} /></label>
             <label>Đến ngày<input type="date" value={filters.to} onChange={e => setFilters(v => ({ ...v, to: e.target.value }))} /></label>
             <button type="button" className="w6-button" disabled={loading || !!rangeError} onClick={() => setReload(v => v + 1)}>Làm mới</button></div>
@@ -223,8 +223,9 @@ function ManagementDashboard({ session, onNavigate }: Props) {
 }
 
 export default function AreaDashboard(props: Props) {
-    if (props.session.user.role === 'STAFF' || (props.session.user.role === 'BRANCH_MANAGER' && !props.session.user.branchId)) {
-        return <p className="wh-error" role="alert">Tài khoản không có quyền xem dashboard quản lý hoặc chưa được phân công chi nhánh.</p>;
+    if (props.session.user.role === 'STAFF' ||
+        (props.session.user.role === 'BRANCH_MANAGER' && !props.session.user.areaId)) {
+        return <p className="wh-error" role="alert">Tài khoản không có quyền xem dashboard quản lý hoặc chưa được phân công khu vực.</p>;
     }
-    return <ManagementDashboard key={`${props.session.user.id}:${props.session.user.branchId ?? ''}`} {...props} />;
+    return <ManagementDashboard key={`${props.session.user.id}:${props.session.user.areaId ?? ''}`} {...props} />;
 }

@@ -10,26 +10,34 @@ const transferId = '33333333-3333-4333-8333-333333333333';
 const ingredientId = '44444444-4444-4444-8444-444444444444';
 const receiptId = '55555555-5555-4555-8555-555555555555';
 const actorId = '66666666-6666-4666-8666-666666666666';
-const session = { token: 'unit-fixture-only', user: {
-    id: actorId, role: 'STAFF' as const, branchId: destinationId, email: '', displayName: '',
-} };
+const session = {
+    token: 'unit-fixture-only', user: {
+        id: actorId, role: 'STAFF' as const, branchId: destinationId, email: '', displayName: '',
+    }
+};
 const input = { note: '', items: [{ ingredientId, receivedQuantity: '10', damagedQuantity: '0', discrepancyReason: null }] };
 const fetcher = vi.fn();
 function details(confirmed = false): ReceivingDetails {
     const line = { ingredientId, code: 'UNIT', name: 'Fixture item', unit: 'piece' as const, plannedQuantity: '10.000000' };
     return {
-        transfer: { id: transferId, code: 'TR-UNIT', status: 'POSTED', inventoryPosted: true, sourceBranchId: sourceId,
+        transfer: {
+            id: transferId, code: 'TR-UNIT', status: 'POSTED', inventoryPosted: true, sourceBranchId: sourceId,
             legacyReceivingRequired: false,
             destinationBranchId: destinationId, sourceBranch: { id: sourceId, code: 'S', name: 'Source fixture' },
             destinationBranch: { id: destinationId, code: 'D', name: 'Destination fixture' },
-            postedAt: '2026-11-20T00:00:00.000Z', items: [line] },
-        receipt: { id: receiptId, stockDocumentId: transferId, status: confirmed ? 'CONFIRMED' : 'DRAFT',
+            postedAt: '2026-11-20T00:00:00.000Z', items: [line]
+        },
+        receipt: {
+            id: receiptId, stockDocumentId: transferId, status: confirmed ? 'CONFIRMED' : 'DRAFT',
             version: confirmed ? 4 : 3, note: null, createdById: actorId, receivedById: confirmed ? actorId : null,
             physicalReceivedAt: null, legacyEvidence: null,
             createdAt: '2026-11-20T00:00:00.000Z', updatedAt: '2026-11-20T00:00:00.000Z',
             confirmedAt: confirmed ? '2026-11-20T00:00:00.000Z' : null, discrepancyCount: 0,
-            items: [{ ...line, receivedQuantity: '10.000000', damagedQuantity: '0.000000', usableQuantity: '10.000000',
-                shortageQuantity: '0.000000', overageQuantity: '0.000000', hasDiscrepancy: false, discrepancyReason: null }] },
+            items: [{
+                ...line, receivedQuantity: '10.000000', damagedQuantity: '0.000000', usableQuantity: '10.000000',
+                shortageQuantity: '0.000000', overageQuantity: '0.000000', hasDiscrepancy: false, discrepancyReason: null
+            }]
+        },
         receivingStatus: confirmed ? 'CONFIRMED' : 'DRAFT', adjustsInventory: false,
         allowedActions: { canCreate: false, canEdit: !confirmed, canConfirm: !confirmed },
     };
@@ -38,7 +46,11 @@ function response(value: unknown, status = 200) {
     return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 }
 beforeEach(() => {
-    vi.stubGlobal('window', { setTimeout, clearTimeout });
+    vi.stubGlobal('window', {
+        setTimeout,
+        clearTimeout,
+        dispatchEvent: vi.fn(),
+    });
     vi.stubGlobal('fetch', fetcher);
     fetcher.mockReset();
 });
@@ -70,8 +82,10 @@ describe('receiving API contracts and uncertain outcomes', () => {
         const result = await getTransferReceiving(session, transferId);
         expect(result.transfer.legacyReceivingRequired).toBe(true);
         expect(result.receipt?.legacyEvidence).toBe(value.receipt!.legacyEvidence);
-        const input = { note: '', items: [{ ingredientId, receivedQuantity: '10', damagedQuantity: '0', discrepancyReason: null }],
-            physicalReceivedAt: value.receipt!.physicalReceivedAt!, legacyEvidence: value.receipt!.legacyEvidence! };
+        const input = {
+            note: '', items: [{ ingredientId, receivedQuantity: '10', damagedQuantity: '0', discrepancyReason: null }],
+            physicalReceivedAt: value.receipt!.physicalReceivedAt!, legacyEvidence: value.receipt!.legacyEvidence!
+        };
         fetcher.mockResolvedValueOnce(response({ data: value }));
         await createReceipt(session, transferId, input);
         expect(JSON.parse(fetcher.mock.calls[1]?.[1].body)).toEqual(input);
@@ -92,13 +106,19 @@ describe('receiving API contracts and uncertain outcomes', () => {
         fetcher.mockResolvedValue(response({ data: details(true), replayed: true }));
         expect((await confirmReceipt(session, receiptId, 3)).receipt?.version).toBe(4);
         const options = fetcher.mock.calls[0]?.[1];
-        expect(options.headers.Authorization).toBe('Bearer unit-fixture-only');
+        expect(new Headers(options.headers).get('authorization')).toBe(
+            'Bearer unit-fixture-only'
+        );
         expect(JSON.parse(options.body)).toEqual({ expectedVersion: 3 });
     });
     it('uses server-side destination/status filters and explicit page numbers', async () => {
-        fetcher.mockResolvedValue(response({ items: [{ id: transferId, code: 'TR-UNIT', status: 'POSTED',
-            legacyReceivingRequired: false,
-            sourceBranchId: sourceId, destinationBranchId: destinationId, postedAt: null, transferReceipt: null }], page: 2, total: 51 }));
+        fetcher.mockResolvedValue(response({
+            items: [{
+                id: transferId, code: 'TR-UNIT', status: 'POSTED',
+                legacyReceivingRequired: false,
+                sourceBranchId: sourceId, destinationBranchId: destinationId, postedAt: null, transferReceipt: null
+            }], page: 2, total: 51
+        }));
         const result = await listPostedTransfers(session, destinationId, 2, 'ALL');
         const url = String(fetcher.mock.calls[0]?.[0]);
         expect(url).toContain('destinationBranchId=' + destinationId);

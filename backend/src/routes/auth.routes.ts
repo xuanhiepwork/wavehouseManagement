@@ -130,19 +130,23 @@ export function createAuthRouter(
                     role: true,
                     branchId: true,
                     isActive: true,
-                    branch: {
-                        select: { isActive: true },
-                    },
+                    branch: { select: { isActive: true } },
+                    areaId: true,
+                    workKind: true,
+                    area: { select: { isActive: true } },
                 },
             });
 
             if (
                 !user ||
                 !user.isActive ||
-                (
-                    user.role !== 'ADMIN' &&
-                    (!user.branchId || !user.branch?.isActive)
-                )
+                (user.role === 'BRANCH_MANAGER' &&
+                    !((user.areaId && user.area?.isActive) || (user.branchId && user.branch?.isActive))) ||
+                (user.role === 'STAFF' && !(
+                    (user.workKind === 'SALES' && user.areaId && user.area?.isActive) ||
+                    user.workKind === 'KITCHEN_DELIVERY' ||
+                    (user.branchId && user.branch?.isActive)
+                ))
             ) {
                 sessions.delete(token);
                 res.status(401).json({ error: 'Unauthorized' });
@@ -155,7 +159,9 @@ export function createAuthRouter(
                     email: user.email,
                     displayName: user.displayName,
                     role: user.role,
-                    branchId: user.branchId,
+                    branchId: user.branch?.isActive ? user.branchId : null,
+                    areaId: user.areaId,
+                    workKind: user.workKind,
                 },
             });
         } catch {

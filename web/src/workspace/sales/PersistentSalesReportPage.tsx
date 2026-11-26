@@ -5,6 +5,8 @@ import { createSalesApi, SalesApiError, type PaymentChannel, type SalesBranch, t
     type SalesProduct, type SalesReport, type SalesRevision, type SalesShift, type SalesSize, type SalesStatus } from './sales.api';
 import './SalesReportPage.css';
 import './PersistentSalesReportPage.css';
+import SalesQuickEntryGrid from './SalesQuickEntryGrid';
+import { catalogVnd } from './sales-quick-entry.logic';
 
 type Props = { session: AuthSession; mode: 'sales' | 'reconciliation';
     onUnsavedChange?: (dirty: boolean) => void; onWorkingChange?: (working: boolean) => void };
@@ -116,8 +118,9 @@ function Totals({ revision, dirty = false }: { revision: SalesRevision; dirty?: 
 export default function PersistentSalesReportPage({ session, mode, onUnsavedChange, onWorkingChange }: Props) {
     const api = useMemo(() => createSalesApi(session.token), [session.token]);
     const isAdmin = session.user.role === 'ADMIN';
+    const isSalesStaff = session.user.role === 'STAFF';
     const boundBranch = session.user.branchId ?? '';
-    const [form, setForm] = useState(() => emptyInput(boundBranch));
+    const [form, setForm] = useState(() => emptyInput(isAdmin ? '' : boundBranch));
     const [baseline, setBaseline] = useState(() => JSON.stringify(form));
     const [report, setReport] = useState<SalesReport | null>(null);
     const [products, setProducts] = useState<SalesProduct[]>([]);
@@ -125,8 +128,10 @@ export default function PersistentSalesReportPage({ session, mode, onUnsavedChan
     const [catalogLoading, setCatalogLoading] = useState(true);
     const [catalogError, setCatalogError] = useState('');
     const [branchError, setBranchError] = useState('');
+    const [assignedShifts, setAssignedShifts] = useState<{ branchId: string; shift: SalesShift }[]>([]);
+    const [contextLoading, setContextLoading] = useState(false);
     const [catalogRetry, setCatalogRetry] = useState(0);
-    const [filters, setFilters] = useState({ branchId: boundBranch, from: '', to: '', shift: '', status: '', page: 1 });
+    const [filters, setFilters] = useState({ branchId: '', from: '', to: '', shift: '', status: '', page: 1 });
     const [items, setItems] = useState<SalesReport[]>([]);
     const [total, setTotal] = useState(0);
     const [listLoading, setListLoading] = useState(false);
@@ -165,10 +170,24 @@ export default function PersistentSalesReportPage({ session, mode, onUnsavedChan
         setCatalogLoading(true); setCatalogError(''); setBranchError('');
         void api.products().then(data => { if (!cancelled) setProducts(data); }).catch(cause => { if (!cancelled) setCatalogError(errorText(cause)); })
             .finally(() => { if (!cancelled) setCatalogLoading(false); });
-        if (isAdmin) void api.branches().then(data => { if (!cancelled) setBranches(data); }).catch(cause => { if (!cancelled) setBranchError(errorText(cause)); });
-        else setBranches(boundBranch ? [{ id: boundBranch, name: boundBranch, isActive: true }] : []);
         return () => { cancelled = true; };
-    }, [api, isAdmin, boundBranch, catalogRetry]);
+    }, [api, catalogRetry]);
+    useEffect(() => {
+        let cancelled = false;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(form.businessDate)) return;
+        setContextLoading(true); setBranchError('');
+        void api.workContext(form.businessDate).then(context => {
+            if (cancelled) return;
+            setBranches(context.branches);
+            setAssignedShifts(context.assignments);
+            if (isSalesStaff) setForm(previous => report ? previous : ({ ...previous,
+                branchId: context.assignments.find(item => item.shift === previous.shift)?.branchId ?? '',
+            }));
+        }).catch(cause => { if (!cancelled) {
+            setAssignedShifts([]); setBranches([]); setBranchError(errorText(cause));
+        } }).finally(() => { if (!cancelled) setContextLoading(false); });
+        return () => { cancelled = true; };
+    }, [api, form.businessDate, isSalesStaff, report?.id, catalogRetry]);
     useEffect(() => {
         let cancelled = false;
         setListLoading(true); setListError('');
@@ -196,7 +215,9 @@ export default function PersistentSalesReportPage({ session, mode, onUnsavedChan
     function open(id: string) { if (!actionLock.current && discard()) void run(() => api.get(id), 'Đã tải báo cáo.'); }
     function newDraft() {
         if (actionLock.current || !discard()) return;
-        const input = emptyInput(isAdmin ? filters.branchId : boundBranch);
+        const assigned = assignedShifts.find(item => item.shift === 'MORNING') ?? assignedShifts[0];
+        const input = emptyInput(isAdmin ? filters.branchId : isSalesStaff ? assigned?.branchId ?? '' : '');
+        if (isSalesStaff && assigned) input.shift = assigned.shift;
         setReport(null); setForm(input); setBaseline(JSON.stringify(input)); setUnallocatedRefunds(null); setReason(''); setError(''); setNotice(''); setConflict(false);
         setHistory(null); setHistoryError(''); setHistoryLoading(false); historySequence.current++;
     }
@@ -240,14 +261,17 @@ export default function PersistentSalesReportPage({ session, mode, onUnsavedChan
         const p = productMap.get(id);
         if (!p?.isAvailable) return;
         const price = p.prices.find(v => v.size === form.lines[index]?.size) ?? p.prices[0];
-        if (!price || !unsigned(price.price)) { setError('Catalog có giá không nguyên VND. Nhập giá nguyên VND rõ ràng trước khi lưu.');
-            if (price) lineChange(index, { productId: p._id, productName: p.name, size: price.size, unitPrice: price.price }); return; }
-        lineChange(index, { productId: p._id, productName: p.name, size: price.size, unitPrice: price.price });
+        const integralPrice = price ? catalogVnd(price.price) : null;
+        if (!price || integralPrice === null) { setError('Catalog có giá không nguyên VND. Nhập giá nguyên VND rõ ràng trước khi lưu.');
+            return; }
+        lineChange(index, { productId: p._id, productName: p.name, size: price.size, unitPrice: integralPrice });
     }
     function chooseSize(index: number, size: SalesSize) {
         const p = productMap.get(form.lines[index]?.productId ?? '');
         const price = p?.prices.find(v => v.size === size);
-        lineChange(index, { size, ...(price ? { unitPrice: price.price } : {}) });
+        const integralPrice = price ? catalogVnd(price.price) : null;
+        if (price && integralPrice === null) { setError('Kích cỡ này có giá không nguyên VND. Kiểm tra Catalog trước khi chọn.'); return; }
+        lineChange(index, { size, ...(integralPrice !== null ? { unitPrice: integralPrice } : {}) });
     }
     function paymentChange(index: number, key: keyof Omit<SalesInput['payments'][number], 'channel'>, value: string) {
         setForm(old => ({ ...old, payments: old.payments.map((p, i) => i === index ? { ...p, [key]: value } : p) }));
@@ -265,7 +289,8 @@ export default function PersistentSalesReportPage({ session, mode, onUnsavedChan
         try {
             if (file.size > 200000) throw new Error('File tối đa 200 KB.');
             const { input, unallocatedRefunds: refunds } = parseImport(JSON.parse(await file.text()));
-            if (!isAdmin && input.branchId !== boundBranch) throw new Error('File thuộc chi nhánh khác.');
+            if (isSalesStaff && !assignedShifts.some(item => item.branchId === input.branchId && item.shift === input.shift))
+                throw new Error('File không khớp quầy/ca được phân công trong ngày.');
             if (report && (input.branchId !== report.branchId || input.businessDate !== report.businessDate || input.shift !== report.shift)) throw new Error('Tạo bản nháp mới để nhập file khác chi nhánh, ngày hoặc ca.');
             if (alive.current) { setForm(input); setUnallocatedRefunds(refunds); setNotice('Đã nhập bản nháp. Dữ liệu và quyền duyệt cần được máy chủ xác nhận khi lưu/gửi.'); }
         } catch (cause) { if (alive.current) setError(errorText(cause)); }
@@ -278,29 +303,34 @@ export default function PersistentSalesReportPage({ session, mode, onUnsavedChan
         <div className="w4-heading"><div><p className="w4-eyebrow">WAVEHOUSE / W7.3</p><h2>{mode === 'sales' ? 'Báo cáo bán hàng theo ca' : 'Đối soát doanh thu & tiền mặt'}</h2>
             <p>Hai khu vực dùng chung báo cáo, bản nháp và lịch sử xét duyệt.</p></div><span className="w4-status">{report ? statusNames[report.status] : 'NHÁP MỚI'}{dirty ? ' · CHƯA LƯU' : ''}</span></div>
         <div className="w4-panel"><h3>Danh sách báo cáo</h3><div className="w73-filters">
-            <label>Chi nhánh<select value={filters.branchId} disabled={!isAdmin} onChange={e => filterChange('branchId', e.target.value)}>
-                {isAdmin && <option value="">Tất cả chi nhánh</option>}{branches.map(b => <option key={b.id} value={b.id}>{b.name}{b.isActive ? '' : ' (ngừng hoạt động)'}</option>)}</select></label>
+            <label>Chi nhánh<select value={filters.branchId} disabled={isSalesStaff} onChange={e => filterChange('branchId', e.target.value)}>
+                <option value="">{isSalesStaff ? 'Báo cáo của tôi' : 'Tất cả quầy trong phạm vi'}</option>{branches.map(b => <option key={b.id} value={b.id}>{b.name}{b.isActive ? '' : ' (ngừng hoạt động)'}</option>)}</select></label>
             <label>Từ ngày<input type="date" value={filters.from} onChange={e => filterChange('from', e.target.value)} /></label>
             <label>Đến ngày<input type="date" value={filters.to} onChange={e => filterChange('to', e.target.value)} /></label>
             <label>Ca<select value={filters.shift} onChange={e => filterChange('shift', e.target.value)}><option value="">Tất cả ca</option>{Object.entries(shiftNames).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
             <label>Trạng thái<select value={filters.status} onChange={e => filterChange('status', e.target.value)}><option value="">Tất cả trạng thái</option>{Object.entries(statusNames).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
         </div>{branchError && <p className="w4-error" role="alert">{branchError} <button onClick={() => setCatalogRetry(x => x + 1)}>Tải lại chi nhánh</button></p>}
-            <div className="w4-actions"><button disabled={listLoading} onClick={() => setRefresh(x => x + 1)}>Tải lại danh sách</button><button disabled={working} onClick={newDraft}>Biểu mẫu mới</button></div>
+            <div className="w4-actions"><button disabled={listLoading} onClick={() => setRefresh(x => x + 1)}>Tải lại danh sách</button>{(isAdmin || isSalesStaff) && <button disabled={working || contextLoading} onClick={newDraft}>Biểu mẫu mới</button>}</div>
             {listLoading && <p role="status">Đang tải danh sách…</p>}{listError && <p role="alert" className="w4-error">{listError}</p>}
             {!listLoading && !listError && items.length === 0 && <p>Chưa có báo cáo phù hợp.</p>}
             {items.length > 0 && <div className="w4-table-scroll"><table className="w4-table w73-list"><thead><tr><th>Ngày / ca</th><th>Chi nhánh</th><th>Trạng thái</th><th>Phiên bản</th><th>Doanh thu kỳ vọng</th><th /></tr></thead><tbody>{items.map(item => <tr key={item.id} aria-selected={report?.id === item.id}>
                 <td>{item.businessDate} / {shiftNames[item.shift]}</td><td>{item.branch.name}</td><td>{statusNames[item.status]}</td><td>#{item.currentRevisionNumber}</td><td>{vnd(item.currentRevision.totals.netExpected)}</td><td><button disabled={working} onClick={() => open(item.id)}>{report?.id === item.id ? 'Tải bản mới nhất' : 'Mở'}</button></td></tr>)}</tbody></table></div>}
             <div className="w4-actions"><button disabled={listLoading || filters.page === 1} onClick={() => setFilters(v => ({ ...v, page: v.page - 1 }))}>Trang trước</button><span>Trang {filters.page} · {total} báo cáo</span><button disabled={listLoading || filters.page * 20 >= total} onClick={() => setFilters(v => ({ ...v, page: v.page + 1 }))}>Trang sau</button></div>
         </div>
+        {isSalesStaff && !report && !contextLoading && assignedShifts.length === 0 &&
+            <p className="w4-warning" role="status">Ngày đã chọn chưa có ca bán được phân công. Liên hệ quản lý khu vực để xếp lịch trước khi lập báo cáo.</p>}
         {error && <p className="w4-error w73-pre" role="alert">{error}{conflict && '\nBản đang nhập vẫn được giữ. Xuất JSON trước khi tải bản mới nhất nếu cần.'}</p>}
         {notice && <p className="w4-notice" role="status">{notice}</p>}{working && <p role="status">Đang xử lý, vui lòng chờ…</p>}
         {report?.returnReason && <p className="w4-warning">Lý do trả lại: {report.returnReason}</p>}
         <div className="w4-panel"><div className="w4-section-header"><h3>Thông tin ca bán</h3>{report && <small>Mã {report.id} · v{report.version} · {timestamp(report.updatedAt)}</small>}</div>
             <fieldset disabled={working || !editable} className="w73-fieldset"><div className="w4-fields">
-                <label>Chi nhánh<select disabled={!!report || !isAdmin} value={form.branchId} onChange={e => setForm(v => ({ ...v, branchId: e.target.value }))}><option value="">Chọn chi nhánh</option>
+                <label>Chi nhánh<select disabled={!!report || isSalesStaff || !isAdmin} value={form.branchId} onChange={e => setForm(v => ({ ...v, branchId: e.target.value }))}><option value="">Chọn chi nhánh</option>
                     {report && !branches.some(b => b.id === report.branchId) && <option value={report.branchId}>{report.branch.name}</option>}{branches.map(b => <option key={b.id} disabled={!b.isActive && !report} value={b.id}>{b.name}</option>)}</select></label>
                 <label>Ngày kinh doanh<input disabled={!!report} type="date" value={form.businessDate} onChange={e => setForm(v => ({ ...v, businessDate: e.target.value }))} /></label>
-                <label>Ca<select disabled={!!report} value={form.shift} onChange={e => setForm(v => ({ ...v, shift: e.target.value as SalesShift }))}>{Object.entries(shiftNames).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
+                <label>Ca<select disabled={!!report} value={form.shift} onChange={e => setForm(v => {
+                    const shift = e.target.value as SalesShift;
+                    return { ...v, shift, branchId: isSalesStaff ? assignedShifts.find(item => item.shift === shift)?.branchId ?? '' : v.branchId };
+                })}>{Object.entries(shiftNames).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
                 <label>Giảm giá (VND)<input inputMode="numeric" value={form.discounts} onChange={e => setForm(v => ({ ...v, discounts: e.target.value }))} /></label>
             </div><label className="w4-notes">Ghi chú / giải thích phát sinh<textarea maxLength={1500} rows={3} value={form.note ?? ''} onChange={e => setForm(v => ({ ...v, note: e.target.value || null }))} /></label></fieldset>
             {!editable && <p className="w73-muted">Báo cáo chỉ đọc. Quyền sửa và xét duyệt do máy chủ xác định.</p>}
@@ -308,6 +338,9 @@ export default function PersistentSalesReportPage({ session, mode, onUnsavedChan
         <div className="w4-panel"><h3>Đồ uống đã bán</h3><p className="w73-muted">Giá và tên đã lưu được giữ theo phiên bản. Chỉ khi chọn sản phẩm/size mới lấy giá Catalog hiện tại. Có thể ghi đơn giá thực tế nguyên VND.</p>
             {catalogLoading && <p role="status">Đang tải Catalog…</p>}{catalogError && <p className="w4-error" role="alert">{catalogError} <button onClick={() => setCatalogRetry(x => x + 1)}>Thử lại Catalog</button></p>}
             {!catalogLoading && !catalogError && products.length === 0 && <p>Catalog chưa có sản phẩm. Có thể lưu dòng nhập tay làm nháp.</p>}
+            {!catalogLoading && !catalogError && <SalesQuickEntryGrid products={products} lines={form.lines} disabled={working || !editable}
+                onChange={lines => setForm(value => ({ ...value, lines }))} />}
+            <h4>Chi tiết dòng bán hàng / giá thực tế</h4>
             {form.lines.length === 0 && <p className="w73-muted">Chưa có dòng bán hàng. Nếu ca không phát sinh bán, ghi rõ trong ghi chú để gửi báo cáo.</p>}
             <fieldset disabled={working || !editable} className="w73-fieldset"><div className="w4-table-scroll"><table className="w4-table w73-lines"><thead><tr><th>Catalog</th><th>Tên chụp tại ca</th><th>Size</th><th>Số ly</th><th>Đơn giá (VND)</th><th>Ghi chú</th><th /></tr></thead><tbody>{form.lines.map((l, index) => {
                 const product = productMap.get(l.productId ?? '');
@@ -319,7 +352,7 @@ export default function PersistentSalesReportPage({ session, mode, onUnsavedChan
                     <td><input aria-label={`Đơn giá dòng ${index + 1}`} inputMode="numeric" value={l.unitPrice} onChange={e => lineChange(index, { unitPrice: e.target.value })} /></td>
                     <td><input aria-label={`Ghi chú dòng ${index + 1}`} maxLength={240} value={l.note ?? ''} onChange={e => lineChange(index, { note: e.target.value || null })} /></td>
                     <td><button type="button" onClick={() => setForm(v => ({ ...v, lines: v.lines.filter((_, i) => i !== index) }))}>Xóa</button></td></tr>;
-            })}</tbody></table></div><button type="button" disabled={form.lines.length >= 100} onClick={() => setForm(v => ({ ...v, lines: [...v.lines, { productId: null, productName: '', size: 'M', quantity: 1, unitPrice: '0', note: null }] }))}>Thêm đồ uống</button></fieldset>
+            })}</tbody></table></div><button type="button" disabled={form.lines.length >= 100} onClick={() => setForm(v => ({ ...v, lines: [...v.lines, { productId: null, productName: '', size: 'M', quantity: 1, unitPrice: '0', note: null }] }))}>Thêm dòng nhập tay (chỉ lưu nháp)</button></fieldset>
         </div>
         <div className="w4-panel"><h3>Thu tiền, hoàn tiền & đối soát theo kênh</h3><p className="w73-muted">Thu trước phí nền tảng. Khoản hoàn phải thuộc doanh thu gộp của ca này; tổng hoàn được máy chủ cộng theo kênh. Phí và chênh lệch thanh toán được ghi riêng.</p>
             {unallocatedRefunds !== null && <div className="w4-warning">File W4 có {vnd(unallocatedRefunds)} hoàn tiền chưa gắn kênh. Phân bổ vào các ô hoàn bên dưới rồi xác nhận.

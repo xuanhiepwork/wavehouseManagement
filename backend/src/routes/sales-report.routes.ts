@@ -38,7 +38,7 @@ export function createSalesReportRouter(prisma: PrismaClient) {
     router.use((_req, res, next) => {
         const actor = actorOf(res);
         if (!actor) { res.status(401).json({ error: 'Unauthorized' }); return; }
-        if (!['ADMIN', 'BRANCH_MANAGER', 'STAFF'].includes(actor.role) || (actor.role !== 'ADMIN' && !actor.branchId)) {
+        if (!['ADMIN', 'BRANCH_MANAGER', 'STAFF'].includes(actor.role)) {
             res.status(403).json({ error: 'Forbidden' }); return;
         }
         next();
@@ -62,6 +62,38 @@ export function createSalesReportRouter(prisma: PrismaClient) {
                 query.status = req.query.status as NonNullable<SalesQuery['status']>;
             }
             res.json(await service.list(actorOf(res), query));
+        } catch (error) { errorResponse(res, error); }
+    });
+    // Work context: manager branches by area, staff only their scheduled shifts on the selected date.
+    // Requires session authentication and always re-reads user scope from PostgreSQL.
+    router.get('/work-context', async (req, res) => {
+        try {
+            const day = salesDate(req.query.businessDate);
+            const actor = actorOf(res);
+            const user = await prisma.user.findUnique({ where: { id: actor.id }, select: {
+                id: true, role: true, workKind: true, areaId: true, isActive: true,
+                area: { select: { isActive: true } },
+            } });
+            if (!user?.isActive) return void res.status(403).json({ error: 'Account inactive' });
+            if (user.role === 'STAFF') {
+                if (user.workKind !== 'SALES' || !user.areaId || !user.area?.isActive)
+                    return void res.status(403).json({ error: 'No active sales area' });
+                const shifts = await prisma.shiftAssignment.findMany({ where: {
+                    userId: user.id, businessDate: day, status: 'SCHEDULED',
+                    branch: { areaId: user.areaId, isActive: true },
+                }, select: { branchId: true, shift: true, branch: { select: { id: true, code: true, name: true, isActive: true } } },
+                orderBy: { shift: 'asc' } });
+                const branches = [...new Map(shifts.map(item => [item.branch.id, item.branch])).values()];
+                return void res.json({ branches, assignments: shifts.map(item => ({ branchId: item.branchId, shift: item.shift })) });
+            }
+            if (user.role === 'BRANCH_MANAGER' && (!user.areaId || !user.area?.isActive))
+                return void res.status(403).json({ error: 'No active manager area' });
+            const branches = await prisma.branch.findMany({
+                where: user.role === 'ADMIN' ? {} : { areaId: user.areaId! },
+                select: { id: true, code: true, name: true, isActive: true },
+                orderBy: { code: 'asc' }, take: 300,
+            });
+            res.json({ branches, assignments: [] });
         } catch (error) { errorResponse(res, error); }
     });
     router.post('/', async (req, res) => {

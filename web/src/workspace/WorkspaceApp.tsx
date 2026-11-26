@@ -11,6 +11,8 @@ import { InventoryPage } from './inventory/InventoryPage';
 import WarehousePage from './warehouse/WarehousePage';
 import AIAdvisoryPage from './ai4/AIAdvisoryPage';
 import RecipeEvidencePage from './ai5/RecipeEvidencePage';
+import SchedulingPage from './scheduling/SchedulingPage';
+import AreaManagement from './management/AreaManagement';
 import type { ForecastPlan } from './warehouse/warehouse.api';
 import { SESSION_EXPIRED_EVENT } from './api';
 import SessionRefresh from './SessionRefresh';
@@ -31,6 +33,8 @@ type Section =
     | 'catalog'
     | 'branches'
     | 'users'
+    | 'scheduling'
+    | 'areas'
     | 'receipts'
     | 'issues'
     | 'transfers';
@@ -47,6 +51,7 @@ const everyone: UserRole[] = ['ADMIN', 'BRANCH_MANAGER', 'STAFF'];
 const managers: UserRole[] = ['ADMIN', 'BRANCH_MANAGER'];
 
 const navigation: NavItem[] = [
+    { id: 'scheduling', label: 'Lịch làm việc', symbol: '▦', roles: everyone, detail: 'Đăng ký lịch rảnh và phân ca linh hoạt theo khu vực' },
     { id: 'overview', label: 'Tổng quan', symbol: '▦', roles: everyone, detail: 'Các công việc cần thực hiện theo vai trò' },
     { id: 'shift', label: 'Chốt ca & kiểm kê', symbol: '▤', roles: everyone, detail: 'Nhập nguyên liệu còn lại cuối ca, gửi và duyệt kiểm kê (B6)' },
     { id: 'receiving', label: 'Nhận hàng đầu ca', symbol: '◫', roles: everyone, detail: 'Đối chiếu hàng giao và hàng thực nhận' },
@@ -61,13 +66,14 @@ const navigation: NavItem[] = [
     { id: 'ai-forecast', label: 'Dự báo AI', symbol: '✦', roles: ['ADMIN'], detail: 'So sánh AI2 và B7, khoảng bất định và cảnh báo dữ liệu' },
     { id: 'ai-evidence', label: 'Bằng chứng công thức AI', symbol: '✓', roles: ['ADMIN'], detail: 'Xác nhận công thức lịch sử cho báo cáo bán hàng đã duyệt' },
     { id: 'catalog', label: 'Danh mục sản phẩm', symbol: '▦', roles: ['ADMIN'], detail: 'Nguyên liệu, sản phẩm và công thức B2' },
+    { id: 'areas', label: 'Khu vực', symbol: '◎', roles: ['ADMIN'], detail: 'Quản lý khu vực, quầy và phân công nhân sự' },
     { id: 'branches', label: 'Chi nhánh', symbol: '⌂', roles: ['ADMIN'], detail: 'Quản lý chi nhánh B1' },
     { id: 'users', label: 'Tài khoản nhân viên', symbol: '♙', roles: ['ADMIN'], detail: 'Quản lý nhân sự và phân quyền B1' },
 ];
 
 function roleName(role: UserRole): string {
     if (role === 'ADMIN') return 'Quản trị hệ thống';
-    if (role === 'BRANCH_MANAGER') return 'Quản lý chi nhánh';
+    if (role === 'BRANCH_MANAGER') return 'Quản lý khu vực';
     return 'Nhân viên quầy';
 }
 
@@ -148,7 +154,7 @@ function LoginScreen({ onAuthenticated }: { onAuthenticated: (session: AuthSessi
                     <input id="wh-password" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} placeholder="Nhập mật khẩu" />
                     {error && <p role="alert" className="wh-error">{error}</p>}
                     <button type="submit" className="wh-primary" disabled={busy}>{busy ? 'Đang xác thực…' : 'Đăng nhập →'}</button>
-                    <p className="wh-form-hint">Không có chức năng tự đăng ký. Quản trị viên tạo tài khoản và phân quyền chi nhánh.</p>
+                    <p className="wh-form-hint">Không có chức năng tự đăng ký. Quản trị viên tạo tài khoản và phân quyền khu vực hoặc kho trung tâm.</p>
                 </form>
             </section>
         </div>
@@ -185,7 +191,9 @@ export default function WorkspaceApp() {
     }, [session]);
 
     function navigate(section: Section): boolean {
-        if (!session || forms.working || logoutLock.current || !navigation.some(item => item.id === section && item.roles.includes(session.user.role))) return false;
+        if (!session || forms.working || logoutLock.current || !navigation.some(item => item.id === section && item.roles.includes(session.user.role) &&
+            !(session.user.role === 'STAFF' && session.user.workKind === 'KITCHEN_DELIVERY' &&
+            ['sales', 'reconciliation', 'scheduling', 'shift'].includes(item.id)))) return false;
         setActive(section);
         setVisited(previous => new Set(previous).add(section));
         if (section === 'planning' || section === 'delivery') setWarehouseMode(section);
@@ -198,7 +206,9 @@ export default function WorkspaceApp() {
     if (session === undefined) return <div className="wh-loading" role="status">Đang kiểm tra phiên làm việc…</div>;
     if (session === null) return <LoginScreen onAuthenticated={authenticated} />;
 
-    const allowed = navigation.filter(item => item.roles.includes(session.user.role));
+    const isCentralStaff = session.user.role === 'STAFF' && session.user.workKind === 'KITCHEN_DELIVERY';
+    const allowed = navigation.filter(item => item.roles.includes(session.user.role) &&
+        !(isCentralStaff && ['sales', 'reconciliation', 'scheduling', 'shift'].includes(item.id)));
     const selected = allowed.find(item => item.id === active) ?? allowed[0];
     async function logout() {
         if (logoutLock.current || forms.working || (forms.dirty && !window.confirm('Có dữ liệu chưa lưu hoặc kết quả ghi cần đối chiếu. Đăng xuất sẽ đóng các biểu mẫu đang mở. Bạn đã lưu/sao lưu và muốn đăng xuất?'))) return;
@@ -237,14 +247,15 @@ export default function WorkspaceApp() {
                 {forms.dirty && <p className="wh-editor-notice" role="status">Có biểu mẫu chưa lưu hoặc kết quả cần đối chiếu. Chuyển menu giữ nguyên dữ liệu trong phiên; đăng xuất/tải lại có thể mất thay đổi chưa lưu.</p>}
                 <fieldset className="wh-workspace-pages" disabled={expired || loggingOut}>
                     {/* One persistent editor serves both sales and cash reconciliation. */}
-                    <div hidden={selected.id !== 'sales' && selected.id !== 'reconciliation'}>
+                    {!isCentralStaff && <div hidden={selected.id !== 'sales' && selected.id !== 'reconciliation'}>
                         <PersistentSalesReportPage key={session.user.id} session={session}
                             mode={selected.id === 'reconciliation' ? 'reconciliation' : 'sales'}
                             onUnsavedChange={forms.callbacks.sales.onDirtyChange} onWorkingChange={forms.callbacks.sales.onWorkingChange} />
-                    </div>
+                    </div>}
                     {selected.id === 'overview' && (session.user.role === 'STAFF'
                         ? <StartingPage role={session.user.role} onOpen={navigate} />
                         : <AreaDashboard session={session} onNavigate={navigate} />)}
+                    {visited.has('scheduling') && <div hidden={selected.id !== 'scheduling'}><SchedulingPage session={session} /></div>}
                     {visited.has('shift') && <div hidden={selected.id !== 'shift'}><ShiftStockCountPage session={session} {...forms.callbacks.shift} /></div>}
                     {visited.has('receiving') && <div hidden={selected.id !== 'receiving'}><ReceivingPage session={session} initialTransferId={receivingId} initialRequest={receivingRequest}
                         onUnsavedChange={forms.callbacks.receiving.onDirtyChange} onWorkingChange={forms.callbacks.receiving.onWorkingChange} /></div>}
@@ -264,6 +275,7 @@ export default function WorkspaceApp() {
                         {visited.has('ai-forecast') && <div hidden={selected.id !== 'ai-forecast'}><AIAdvisoryPage session={session} /></div>}
                         {visited.has('ai-evidence') && <div hidden={selected.id !== 'ai-evidence'}><RecipeEvidencePage session={session} /></div>}
                         {visited.has('catalog') && <div className="wh-catalog-wrap" hidden={selected.id !== 'catalog'}><ExistingCatalog session={session} {...forms.callbacks.catalog} /></div>}
+                        {visited.has('areas') && <div hidden={selected.id !== 'areas'}><AreaManagement session={session} /></div>}
                         {(['branches', 'users'] as const).map(mode => visited.has(mode) && <div key={mode} hidden={selected.id !== mode}>
                             <ManagementPage session={session} mode={mode} {...forms.callbacks[mode]} />
                         </div>)}

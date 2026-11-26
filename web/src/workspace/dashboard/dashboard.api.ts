@@ -122,8 +122,8 @@ function parseSummary(raw: unknown): DashboardSummary {
     return d as unknown as DashboardSummary;
 }
 export async function loadDashboardSummary(session: AuthSession, filters: DashboardFilters, signal?: AbortSignal): Promise<DashboardSummary> {
-    if (session.user.role === 'STAFF' || (session.user.role === 'BRANCH_MANAGER' && !session.user.branchId)) throw new DashboardApiError('Chỉ quản lý được xem dashboard.', 403);
-    const branchId = session.user.role === 'ADMIN' ? filters.branchId : session.user.branchId!;
+    if (session.user.role === 'STAFF') throw new DashboardApiError('Chỉ quản lý được xem dashboard.', 403);
+    const branchId = filters.branchId;
     const query = new URLSearchParams({ from: filters.from, to: filters.to });
     if (branchId) query.set('branchId', branchId);
     const data = parseSummary(await request(session, `/dashboard/summary?${query}`, signal));
@@ -137,7 +137,13 @@ export async function loadDashboardSummary(session: AuthSession, filters: Dashbo
     return data;
 }
 export async function loadDashboardBranches(session: AuthSession, signal?: AbortSignal): Promise<DashboardBranch[]> {
-    if (session.user.role !== 'ADMIN') throw new DashboardApiError('Chỉ ADMIN được chọn chi nhánh toàn hệ thống.', 403);
+    if (session.user.role === 'STAFF') throw new DashboardApiError('Chỉ quản lý được xem dashboard.', 403);
+    if (session.user.role === 'BRANCH_MANAGER') {
+        if (!session.user.areaId) throw new DashboardApiError('Quản lý chưa được phân công khu vực.', 403);
+        const payload = await request(session, `/areas/${encodeURIComponent(session.user.areaId)}/branches`, signal);
+        if (!object(payload) || !Array.isArray(payload.items) || !payload.items.every(branch)) return malformed();
+        return payload.items as DashboardBranch[];
+    }
     const result: DashboardBranch[] = [];
     for (let page = 1; page <= 20; page++) {
         const payload = await request(session, `/branches?page=${page}`, signal);

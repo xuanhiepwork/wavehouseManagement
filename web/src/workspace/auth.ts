@@ -8,6 +8,8 @@ export type AuthUser = {
     email: string;
     displayName: string;
     branchId: string | null;
+    areaId: string | null;
+    workKind: 'SALES' | 'KITCHEN_DELIVERY';
 };
 
 export type AuthSession = {
@@ -37,7 +39,7 @@ function readUser(payload: unknown): AuthUser {
 
     if (!candidate) throw new Error('Máy chủ không trả thông tin người dùng.');
 
-    const { id, role, email, displayName, branchId } = candidate;
+    const { id, role, email, displayName, branchId, areaId, workKind } = candidate;
     if (
         typeof id !== 'string' ||
         (role !== 'ADMIN' && role !== 'BRANCH_MANAGER' && role !== 'STAFF')
@@ -51,6 +53,8 @@ function readUser(payload: unknown): AuthUser {
         email: typeof email === 'string' ? email : '',
         displayName: typeof displayName === 'string' ? displayName : '',
         branchId: typeof branchId === 'string' ? branchId : null,
+        areaId: typeof areaId === 'string' ? areaId : null,
+        workKind: workKind === 'KITCHEN_DELIVERY' ? 'KITCHEN_DELIVERY' : 'SALES',
     };
 }
 

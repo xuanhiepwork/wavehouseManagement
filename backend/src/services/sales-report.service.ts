@@ -101,11 +101,45 @@ const revisionInclude = {
     lines: { orderBy: { position: 'asc' } }, payments: { orderBy: { channel: 'asc' } },
     expenses: { orderBy: { position: 'asc' } }, cash: true,
 } as const;
-const reportInclude = { branch: { select: { id: true, code: true, name: true, isActive: true } } } as const;
+const reportInclude = { branch: { select: { id: true, code: true, name: true, isActive: true, areaId: true } } } as const;
 type Report = Prisma.SalesReportGetPayload<{ include: typeof reportInclude }>;
 type Revision = Prisma.SalesReportRevisionGetPayload<{ include: typeof revisionInclude }>;
-function scope(actor: SalesActor) { return actor.role === 'ADMIN' ? {} : { branchId: actor.branchId! }; }
-async function load(tx: Prisma.TransactionClient, actor: SalesActor, id: string): Promise<Report> {
+/** Re-read role and area from PostgreSQL for every operation. Never trust a stale token branch scope. */
+type ScopedActor = SalesActor & { areaId: string | null; workKind: string };
+async function resolveActor(tx: Prisma.TransactionClient, actor: SalesActor): Promise<ScopedActor> {
+    const user = await tx.user.findUnique({ where: { id: actor.id },
+        select: { id: true, role: true, branchId: true, areaId: true, workKind: true, isActive: true,
+            area: { select: { isActive: true } } } });
+    if (!user?.isActive) throw new SalesReportError('Account inactive or unavailable', 403, 'FORBIDDEN');
+    if (user.role === 'BRANCH_MANAGER' && (!user.areaId || !user.area?.isActive)) {
+        throw new SalesReportError('Manager has no active area assignment', 403, 'FORBIDDEN');
+    }
+    if (user.role === 'STAFF' && (
+        user.workKind !== 'SALES' || !user.areaId || !user.area?.isActive
+    )) {
+        throw new SalesReportError('Sales staff needs an active area assignment', 403, 'FORBIDDEN');
+    }
+    return { id: user.id, role: user.role, branchId: user.branchId, areaId: user.areaId, workKind: user.workKind };
+}
+function scope(actor: ScopedActor): Prisma.SalesReportWhereInput {
+    if (actor.role === 'ADMIN') return {};
+    if (actor.role === 'BRANCH_MANAGER') return { branch: { areaId: actor.areaId! } };
+    return { createdById: actor.id };
+}
+async function assertStaffAssignment(tx: Prisma.TransactionClient, actor: ScopedActor,
+    branchId: string, businessDate: Date, shift: Shift): Promise<void> {
+    if (actor.role !== 'STAFF') return;
+    if (!actor.areaId) throw new SalesReportError('Sales staff has no assigned area', 403, 'FORBIDDEN');
+    const assignment = await tx.shiftAssignment.findUnique({ where: { userId_businessDate_shift: {
+        userId: actor.id, businessDate, shift,
+    } }, select: { branchId: true, status: true, branch: { select: { areaId: true, isActive: true } } } });
+    if (!assignment || assignment.status !== 'SCHEDULED' || assignment.branchId !== branchId ||
+        !assignment.branch.isActive || assignment.branch.areaId !== actor.areaId) {
+        throw new SalesReportError('No active shift assignment at this branch/date/shift', 403, 'SHIFT_ASSIGNMENT_REQUIRED');
+    }
+}
+
+async function load(tx: Prisma.TransactionClient, actor: ScopedActor, id: string): Promise<Report> {
     const report = await tx.salesReport.findFirst({ where: { id, ...scope(actor) }, include: reportInclude });
     if (!report) throw new SalesReportError('Report not found or inaccessible', 404, 'SALES_REPORT_NOT_FOUND');
     return report;
@@ -218,72 +252,83 @@ export type SalesQuery = { page: number; branchId?: string; from?: Date; to?: Da
 export function createSalesReportService(db: PrismaClient) {
     const transaction = <T>(work: (tx: Prisma.TransactionClient) => Promise<T>) => db.$transaction(work, txOptions);
     return {
-        get: (actor: SalesActor, id: string) => transaction(async tx => details(tx, await load(tx, actor, id), actor)),
+        get: (actor: SalesActor, id: string) => transaction(async tx => {
+            const effective = await resolveActor(tx, actor);
+            return details(tx, await load(tx, effective, id), effective);
+        }),
         list: (actor: SalesActor, query: SalesQuery) => transaction(async tx => {
-            if (actor.role !== 'ADMIN' && query.branchId && query.branchId !== actor.branchId) {
-                throw new SalesReportError('Forbidden branch', 403, 'FORBIDDEN');
+            const effective = await resolveActor(tx, actor);
+            if (effective.role === 'BRANCH_MANAGER' && query.branchId) {
+                const branch = await tx.branch.findUnique({ where: { id: query.branchId }, select: { areaId: true } });
+                if (branch?.areaId !== effective.areaId) throw new SalesReportError('Forbidden branch', 403, 'FORBIDDEN');
             }
-            const where: Prisma.SalesReportWhereInput = { ...scope(actor),
+            const where: Prisma.SalesReportWhereInput = { ...scope(effective),
                 ...(query.branchId ? { branchId: query.branchId } : {}), ...(query.shift ? { shift: query.shift } : {}),
                 ...(query.status ? { status: query.status } : {}),
                 ...((query.from || query.to) ? { businessDate: { ...(query.from ? { gte: query.from } : {}), ...(query.to ? { lte: query.to } : {}) } } : {}) };
             const rows = await tx.salesReport.findMany({ where, include: reportInclude, orderBy: [{ businessDate: 'desc' }, { id: 'asc' }],
                 skip: (query.page - 1) * 20, take: 20 });
             const items = [];
-            for (const report of rows) items.push(await details(tx, report, actor));
+            for (const report of rows) items.push(await details(tx, report, effective));
             return { items, page: query.page, total: await tx.salesReport.count({ where }) };
         }),
         create: (actor: SalesActor, input: SalesInput) => transaction(async tx => {
-            if (actor.role !== 'ADMIN' && input.branchId !== actor.branchId) throw new SalesReportError('Forbidden branch', 403, 'FORBIDDEN');
+            const effective = await resolveActor(tx, actor);
+            if (effective.role === 'BRANCH_MANAGER') throw new SalesReportError('Managers review, not create, sales reports', 403, 'FORBIDDEN');
             const branch = await tx.branch.findUnique({ where: { id: input.branchId } });
             if (!branch?.isActive) return invalid('Active branch is required');
+            await assertStaffAssignment(tx, effective, input.branchId, input.businessDate, input.shift);
             const report = await tx.salesReport.create({ data: { branchId: input.branchId, businessDate: input.businessDate,
                 shift: input.shift, createdById: actor.id }, include: reportInclude });
-            await appendRevision(tx, report, actor, input);
-            await event(tx, report, actor, 'CREATED');
-            return details(tx, report, actor);
+            await appendRevision(tx, report, effective, input);
+            await event(tx, report, effective, 'CREATED');
+            return details(tx, report, effective);
         }),
         update: (actor: SalesActor, id: string, input: SalesInput, expectedVersion: number) => transaction(async tx => {
-            const report = await load(tx, actor, id);
+            const effective = await resolveActor(tx, actor);
+            const report = await load(tx, effective, id);
             if (report.version !== expectedVersion) return conflict();
-            if (!actions(report, actor).canEdit) throw new SalesReportError('Only the creator can edit an active draft or returned report', 403, 'FORBIDDEN');
+            if (!actions(report, effective).canEdit) throw new SalesReportError('Only the creator can edit an active draft or returned report', 403, 'FORBIDDEN');
             if (input.branchId !== report.branchId || input.businessDate.getTime() !== report.businessDate.getTime() || input.shift !== report.shift) {
                 return invalid('Branch, business date and shift cannot change after creation');
             }
             const previous = await current(tx, report);
             await advance(tx, report, expectedVersion, { currentRevisionNumber: { increment: 1 } });
-            const updated = await load(tx, actor, id);
-            await appendRevision(tx, updated, actor, input, previous);
-            await event(tx, updated, actor, 'UPDATED');
-            return details(tx, updated, actor);
+            const updated = await load(tx, effective, id);
+            await appendRevision(tx, updated, effective, input, previous);
+            await event(tx, updated, effective, 'UPDATED');
+            return details(tx, updated, effective);
         }),
         submit: (actor: SalesActor, id: string, expectedVersion: number) => transaction(async tx => {
-            const report = await load(tx, actor, id);
+            const effective = await resolveActor(tx, actor);
+            const report = await load(tx, effective, id);
             if (report.version !== expectedVersion) return conflict();
-            if (!actions(report, actor).canSubmit) throw new SalesReportError('Report cannot be submitted by this user', 403, 'FORBIDDEN');
+            if (!actions(report, effective).canSubmit) throw new SalesReportError('Report cannot be submitted by this user', 403, 'FORBIDDEN');
             await validateSubmission(tx, await current(tx, report));
             await advance(tx, report, expectedVersion, { status: 'SUBMITTED', submittedById: actor.id, submittedAt: new Date(),
                 submittedRevisionNumber: report.currentRevisionNumber, reviewedById: null, reviewedAt: null, returnReason: null });
-            const updated = await load(tx, actor, id);
-            await event(tx, updated, actor, 'SUBMITTED');
-            return details(tx, updated, actor);
+            const updated = await load(tx, effective, id);
+            await event(tx, updated, effective, 'SUBMITTED');
+            return details(tx, updated, effective);
         }),
         review: (actor: SalesActor, id: string, expectedVersion: number, revisionNumber: number, decision: 'RETURNED' | 'APPROVED', reason: string | null) => transaction(async tx => {
-            const report = await load(tx, actor, id);
-            if (actor.role === 'STAFF') throw new SalesReportError('Manager access required', 403, 'FORBIDDEN');
+            const effective = await resolveActor(tx, actor);
+            const report = await load(tx, effective, id);
+            if (effective.role === 'STAFF') throw new SalesReportError('Manager access required', 403, 'FORBIDDEN');
             if (report.version !== expectedVersion || report.status !== 'SUBMITTED' || revisionNumber !== report.submittedRevisionNumber
                 || revisionNumber !== report.currentRevisionNumber) return conflict('Submitted revision is stale or report is no longer submitted');
             if (!report.branch.isActive) return conflict('Branch is inactive');
-            if (decision === 'APPROVED' && report.submittedById === actor.id) throw new SalesReportError('Cannot approve your own submitted report', 403, 'SELF_APPROVAL_FORBIDDEN');
+            if (decision === 'APPROVED' && report.submittedById === effective.id) throw new SalesReportError('Cannot approve your own submitted report', 403, 'SELF_APPROVAL_FORBIDDEN');
             if (decision === 'RETURNED' && !reason?.trim()) return invalid('Return reason is required');
             await advance(tx, report, expectedVersion, { status: decision, reviewedById: actor.id, reviewedAt: new Date(),
                 ...(decision === 'APPROVED' ? { approvedAt: new Date(), approvedRevisionNumber: revisionNumber, returnReason: null } : { returnReason: reason }) });
-            const updated = await load(tx, actor, id);
-            await event(tx, updated, actor, decision, reason);
-            return details(tx, updated, actor);
+            const updated = await load(tx, effective, id);
+            await event(tx, updated, effective, decision, reason);
+            return details(tx, updated, effective);
         }),
         revisions: (actor: SalesActor, id: string) => transaction(async tx => {
-            await load(tx, actor, id);
+            const effective = await resolveActor(tx, actor);
+            await load(tx, effective, id);
             const rows = await tx.salesReportRevision.findMany({ where: { reportId: id }, include: revisionInclude, orderBy: { number: 'desc' } });
             const events = await tx.salesReportEvent.findMany({ where: { reportId: id }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
             return { revisions: rows.map(serializeRevision), events: events.map(e => ({ ...e, createdAt: e.createdAt.toISOString() })) };

@@ -116,6 +116,20 @@ enum UserRole {
   STAFF
 }
 
+model Area {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      String   @unique @db.VarChar(32)
+  name      String   @db.VarChar(150)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  branches Branch[]
+  users    User[]
+
+  @@map("areas")
+}
+
 model Branch {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   code      String   @unique @db.VarChar(32)
@@ -126,6 +140,9 @@ model Branch {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  areaId String? @map("area_id") @db.Uuid
+  area   Area? @relation(fields: [areaId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   users User[]
   inventoryBalances  InventoryBalance[]
   inventoryMovements InventoryMovement[]
@@ -134,7 +151,9 @@ model Branch {
   stockDocumentsDestination StockDocument[] @relation("StockDocumentDestinationBranch")
   shiftStockCounts ShiftStockCount[]
   salesReports SalesReport[]
+  shiftAssignments ShiftAssignment[]
 
+  @@index([areaId])
   @@map("branches")
 }
 
@@ -145,11 +164,18 @@ model User {
   passwordHash String   @map("password_hash") @db.VarChar(255)
   role         UserRole @default(STAFF)
   branchId     String?  @map("branch_id") @db.Uuid
+  areaId       String?  @map("area_id") @db.Uuid
+  workKind     String   @default("SALES") @map("work_kind") @db.VarChar(32)
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   branch Branch? @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  area Area? @relation(fields: [areaId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  availabilityEntries StaffAvailability[]
+  shiftAssignments ShiftAssignment[] @relation("AssignedStaff")
+  plannedAssignments ShiftAssignment[] @relation("AssignmentPlanner")
+  scheduleChanges ScheduleChangeLog[] @relation("ScheduleChangeActor")
   inventoryMovements InventoryMovement[] @relation("InventoryMovementActor")
   receiptsCreated GoodsReceipt[] @relation("GoodsReceiptCreator")
   receiptsPosted  GoodsReceipt[] @relation("GoodsReceiptPoster")
@@ -167,6 +193,7 @@ model User {
   salesRecipeEvidenceAttestations SalesRecipeEvidence[]
 
   @@index([branchId, isActive])
+  @@index([areaId, role, isActive])
   @@map("users")
 }
 
@@ -315,6 +342,61 @@ enum WorkShift {
   MORNING
   AFTERNOON
   EVENING
+}
+
+// Flexible work scheduling is separate from the legacy users.branch_id field.
+model StaffAvailability {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  businessDate DateTime @map("business_date") @db.Date
+  shift        WorkShift
+  available    Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([userId, businessDate, shift])
+  @@index([businessDate, shift])
+  @@map("staff_availability")
+}
+
+model ShiftAssignment {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  branchId     String   @map("branch_id") @db.Uuid
+  businessDate DateTime @map("business_date") @db.Date
+  shift        WorkShift
+  status       String   @default("SCHEDULED") @db.VarChar(16)
+  version      Int      @default(1)
+  assignedById String   @map("assigned_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user        User @relation("AssignedStaff", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  branch      Branch @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  assignedBy  User @relation("AssignmentPlanner", fields: [assignedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  changes     ScheduleChangeLog[]
+
+  @@unique([userId, businessDate, shift])
+  @@index([branchId, businessDate, shift])
+  @@map("shift_assignments")
+}
+
+model ScheduleChangeLog {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assignmentId String   @map("assignment_id") @db.Uuid
+  actorId      String   @map("actor_id") @db.Uuid
+  action       String   @db.VarChar(32)
+  previousBranchId String? @map("previous_branch_id") @db.Uuid
+  nextBranchId String? @map("next_branch_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  assignment ShiftAssignment @relation(fields: [assignmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor User @relation("ScheduleChangeActor", fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([assignmentId, createdAt])
+  @@map("schedule_change_logs")
 }
 
 enum ShiftStockCountStatus {

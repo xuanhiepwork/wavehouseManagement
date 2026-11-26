@@ -5,6 +5,7 @@ import {
     formatQuantity, nextBusinessDateVN, SHIFT_LABEL, sourceLabel,
     type AI4View, type Shift
 } from './ai4.logic';
+import { vietnameseWarning } from './warnings.vi';
 import './AIAdvisoryPage.css';
 
 type Props = { session: AuthSession };
@@ -163,7 +164,7 @@ export default function AIAdvisoryPage({ session }: Props) {
                     <div className="wh-ai4-metrics"><div><strong>{mlCount}</strong><span>Dòng AI2 · ML</span></div><div><strong>{b7Count}</strong><span>Dòng B7</span></div><div><strong>{view.rows.length}</strong><span>Tổng dòng</span></div></div>
                 </div>
                 <div className="wh-ai4-info" role="note"><strong>Chú ý:</strong> Dự báo là nhu cầu nguyên liệu lý thuyết, không phải tiêu hao đã đo. Các cột <b>Giao B7</b> vẫn dùng lượng giao của B7, kể cả khi AI2 đưa ra mức nhu cầu khác. Không có thao tác tạo hoặc POST chứng từ tại màn hình này.</div>
-                {view.warnings.length > 0 && <div className="wh-ai4-card"><h3>Cảnh báo nguồn dữ liệu</h3><ul className="wh-ai4-warnings">{view.warnings.map((warning, index) => <li key={`${index}-${warning.slice(0, 30)}`}>{warning}</li>)}</ul></div>}
+                {view.warnings.length > 0 && <div className="wh-ai4-card"><h3>Cảnh báo nguồn dữ liệu</h3><ul className="wh-ai4-warnings">{view.warnings.map((warning, index) => <li key={`${index}-${warning.slice(0, 30)}`}>{vietnameseWarning(warning)}</li>)}</ul></div>}
                 <div className="wh-ai4-card">
                     <div className="wh-ai4-table-header"><h3>So sánh theo nguyên liệu và chi nhánh</h3><label>Tìm nguyên liệu / chi nhánh<input value={filter} onChange={event => setFilter(event.target.value)} placeholder="Mã hoặc tên…" /></label></div>
                     <div className="wh-ai4-scroll"><table className="wh-ai4-table"><thead><tr>
