@@ -1,0 +1,48 @@
+/* W5 desktop website only; rules scoped to .w5-root. */
+.w5-root { display: grid; gap: 18px; color: #203c45; font-family: inherit; }
+.w5-root * { box-sizing: border-box; }
+.w5-root button, .w5-root input, .w5-root select, .w5-root textarea { font: inherit; }
+.w5-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 22px; }
+.w5-heading h2 { margin: 0 0 8px; color: #14343d; font-size: 27px; }
+.w5-heading p:not(.w5-eyebrow) { margin: 0; color: #657f87; font-size: 13px; line-height: 1.7; }
+.w5-eyebrow { margin: 0 0 7px; color: #517c74; font-weight: 800; letter-spacing: 1.4px; font-size: 10px; }
+.w5-badge { flex-shrink: 0; background: #e2ede5; color: #315e4d; border-radius: 999px; padding: 9px 13px; font-size: 11px; font-weight: 800; }
+.w5-panel { padding: 24px; border: 1px solid #e0e9e9; border-radius: 14px; background: #fff; box-shadow: 0 9px 30px #082e3c06; }
+.w5-panel h3 { margin: 0 0 18px; font-size: 17px; }
+.w5-alert, .w5-error, .w5-success, .w5-caution { border-radius: 10px; padding: 14px 16px; font-size: 12px; line-height: 1.7; }
+.w5-alert { background: #edf5f0; color: #335e50; border: 1px solid #d8e9dc; }
+.w5-error { background: #fff0ed; color: #9b342c; border: 1px solid #f0cec7; }
+.w5-success { background: #eaf5ed; color: #256141; border: 1px solid #cfdfd3; }
+.w5-caution { margin: 12px 0 0; background: #fff8e9; color: #855d19; border: 1px solid #f2e0b7; }
+.w5-muted { margin: 0 0 17px; color: #6b838b; line-height: 1.65; font-size: 12px; }
+.w5-controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: end; }
+.w5-controls > label { min-width: 210px; flex: 1; }
+.w5-root label:not(.w5-check) { display: grid; gap: 8px; color: #31505a; font-weight: 700; font-size: 12px; }
+.w5-root input:not([type='checkbox']), .w5-root select, .w5-root textarea { width: 100%; padding: 11px 13px; border: 1px solid #d4e0e1; border-radius: 9px; background: white; color: #183c46; font-size: 13px; min-height: 42px; }
+.w5-root input:focus, .w5-root select:focus, .w5-root textarea:focus { outline: 2px solid #b4d4b9; outline-offset: 1px; }
+.w5-root input[readonly] { background: #f4f6f6; }
+.w5-root input[aria-invalid='true'] { border-color: #d38377; }
+.w5-primary { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; border: none; padding: 10px 17px; border-radius: 9px; background: #15525a; color: #fff; font-size: 12px; font-weight: 800; cursor: pointer; }
+.w5-primary:hover { background: #226773; }
+.w5-primary:disabled { cursor: not-allowed; opacity: .6; }
+.w5-panel-title { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 8px; }
+.w5-panel-title h3 { margin: 0; }
+.w5-panel-title > span { color: #637f85; font-size: 12px; }
+.w5-search { max-width: 340px; margin: 16px 0; }
+.w5-table-wrap { overflow: auto; max-width: 100%; border: 1px solid #e5edef; border-radius: 11px; margin-top: 14px; }
+.w5-table { width: 100%; border-collapse: collapse; white-space: nowrap; font-size: 12px; }
+.w5-table th { background: #f1f6f4; color: #526d74; text-align: left; padding: 13px 12px; font-weight: 800; position: sticky; top: 0; }
+.w5-table td { padding: 12px; border-top: 1px solid #edf1f2; color: #334c53; }
+.w5-table tbody tr:hover { background: #f8fbfa; }
+.w5-table small { color: #83969a; }
+.w5-number { text-align: right; font-variant-numeric: tabular-nums; }
+.w5-strong { color: #28684a !important; font-weight: 800; }
+.w5-empty { padding: 20px 6px; color: #697e84; font-size: 13px; }
+.w5-destinations { border: 1px solid #e0e8e7; border-radius: 10px; padding: 12px 15px 18px; margin: 18px 0; }
+.w5-destinations legend { color: #31505a; font-weight: 800; font-size: 12px; padding: 0 6px; }
+.w5-destination-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; }
+.w5-check { display: flex; align-items: center; gap: 9px; font-size: 12px; color: #344e56; }
+.w5-quantity { min-width: 115px; max-width: 140px; }
+.w5-invalid { display: block; max-width: 150px; white-space: normal; color: #a34d41 !important; }
+.w5-note-label { margin: 20px 0; max-width: 850px; }
+.w5-dispatch-fields { border: 0; margin: 0; padding: 0; min-width: 0; }

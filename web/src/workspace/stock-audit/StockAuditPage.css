@@ -1,0 +1,27 @@
+.wh-g9{display:grid;gap:1.15rem;min-width:0}
+.wh-g9-filters{display:flex;align-items:end;gap:.6rem;flex-wrap:wrap}
+.wh-g9-filters label{display:grid;gap:.25rem;font-size:.9rem}
+.wh-g9-filters input,.wh-g9-table-head input{background:var(--surface,white);border:1px solid #ced6df;border-radius:8px;padding:.55rem;color:inherit}
+.wh-g9-filters button{min-height:40px;padding:.5rem .85rem;border-radius:8px;cursor:pointer}
+.wh-g9-asof,.wh-g9-muted{font-size:.9rem;opacity:.78;margin:0}
+.wh-g9-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(156px,1fr));gap:.7rem}
+.wh-g9-metrics article{border:1px solid #d5dbe2;border-radius:12px;padding:1rem;display:grid;gap:.4rem;background:var(--surface,transparent)}
+.wh-g9-metrics article span{font-size:.85rem;opacity:.8}
+.wh-g9-metrics article strong{font-size:1.6rem;font-variant-numeric:tabular-nums}
+.wh-g9-notes{border:1px solid #cbd5e1;border-radius:12px;padding:.85rem 1rem}
+.wh-g9-notes ul{margin:.45rem 0 0;padding-left:1.4rem}
+.wh-g9-notes li{margin:.3rem 0}
+.wh-g9-table-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.6rem}
+.wh-g9-table-head h3{margin:0}
+.wh-g9-scroll{overflow:auto;max-width:100%;border:1px solid #d6dde4;border-radius:10px}
+.wh-g9-scroll table{border-collapse:collapse;min-width:1320px;width:100%;font-size:.85rem}
+.wh-g9-scroll th,.wh-g9-scroll td{text-align:right;padding:.65rem .5rem;border-bottom:1px solid #dfe4eb;white-space:nowrap;font-variant-numeric:tabular-nums}
+.wh-g9-scroll th:first-child,.wh-g9-scroll td:first-child{text-align:left;white-space:normal;min-width:185px}
+.wh-g9-scroll th{background:#f1f5f9;color:#1e293b;position:sticky;top:0}
+.wh-g9-scroll td small{display:block;font-size:.77rem;opacity:.75}
+.wh-g9-attention{font-weight:700;color:#a23919}
+.wh-g9-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(285px,1fr));gap:1rem}
+.wh-g9-two section{border:1px solid #d8e0e8;border-radius:12px;padding:1rem;min-width:0}
+.wh-g9-two h3{margin:0 0 .5rem}
+.wh-g9-list{max-height:330px;overflow:auto;font-size:.9rem}
+.wh-g9-list p{padding:.45rem 0;border-bottom:1px solid #e5e9ed;margin:0}

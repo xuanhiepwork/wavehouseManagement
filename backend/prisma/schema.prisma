@@ -32,7 +32,23 @@ model Ingredient {
   isActive          Boolean            @default(true) @map("is_active")
   createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
   recipeIngredients RecipeIngredient[]
+  inventoryBalances  InventoryBalance[]
+  inventoryMovements InventoryMovement[]
+  goodsReceiptItems GoodsReceiptItem[]
+  stockDocumentItems StockDocumentItem[]
+  shiftStockCountItems ShiftStockCountItem[]
+  transferReceiptItems TransferReceiptItem[]
+  warehouseInventoryBalances WarehouseInventoryBalance[]
+  warehouseInventoryMovements WarehouseInventoryMovement[]
+  warehouseReceiptItems WarehouseReceiptItem[]
+  productionBatchInputs ProductionBatchInput[]
+  productionBatchOutputs ProductionBatchOutput[]
+  deliveryStopItems DeliveryStopItem[]
+  restockPlanLines RestockPlanLine[]
+  recoveryAdjustmentItems DeliveryRecoveryAdjustmentItem[]
+  writeOffItems StockWriteOffItem[]
 
   @@index([category, isActive])
   @@map("ingredients")
@@ -49,6 +65,7 @@ model Product {
   createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   variants    ProductVariant[]
+  salesReportLines SalesReportLine[]
 
   @@index([category, isAvailable])
   @@map("products")
@@ -80,6 +97,7 @@ model Recipe {
   productVariant   ProductVariant     @relation("VariantRecipes", fields: [productVariantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   activeFor        ProductVariant[]   @relation("ActiveRecipe")
   ingredients      RecipeIngredient[]
+  salesRecipeEvidence SalesRecipeEvidence[]
 
   @@unique([productVariantId, version])
   @@unique([id, productVariantId])
@@ -99,4 +117,1038 @@ model RecipeIngredient {
   @@unique([recipeId, ingredientId])
   @@index([ingredientId])
   @@map("recipe_ingredients")
+}
+
+enum UserRole {
+  ADMIN
+  BRANCH_MANAGER
+  STAFF
+}
+
+model Area {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      String   @unique @db.VarChar(32)
+  name      String   @db.VarChar(150)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  branches Branch[]
+  users    User[]
+  restockPlans RestockPlan[]
+
+  @@map("areas")
+}
+
+model Branch {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      String   @unique @db.VarChar(32)
+  name      String   @db.VarChar(150)
+  isActive  Boolean  @default(true) @map("is_active")
+  receivingRevision Int @default(0) @map("receiving_revision")
+  inventoryRevision Int @default(0) @map("inventory_revision")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  areaId String? @map("area_id") @db.Uuid
+  area   Area? @relation(fields: [areaId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  users User[]
+  inventoryBalances  InventoryBalance[]
+  inventoryMovements InventoryMovement[]
+  goodsReceipts GoodsReceipt[]
+  stockDocumentsSource      StockDocument[] @relation("StockDocumentSourceBranch")
+  stockDocumentsDestination StockDocument[] @relation("StockDocumentDestinationBranch")
+  shiftStockCounts ShiftStockCount[]
+  salesReports SalesReport[]
+  shiftAssignments ShiftAssignment[]
+  deliveryStops DeliveryStop[]
+  restockPlanLines RestockPlanLine[]
+  recoveryAdjustments DeliveryRecoveryAdjustment[]
+  stockWriteOffs StockWriteOff[]
+
+  @@index([areaId])
+  @@map("branches")
+}
+
+model User {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String   @unique @db.VarChar(254)
+  displayName  String   @map("display_name") @db.VarChar(120)
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  role         UserRole @default(STAFF)
+  branchId     String?  @map("branch_id") @db.Uuid
+  areaId       String?  @map("area_id") @db.Uuid
+  workKind     String   @default("SALES") @map("work_kind") @db.VarChar(32)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  branch Branch? @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  area Area? @relation(fields: [areaId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  availabilityEntries StaffAvailability[]
+  shiftAssignments ShiftAssignment[] @relation("AssignedStaff")
+  plannedAssignments ShiftAssignment[] @relation("AssignmentPlanner")
+  scheduleChanges ScheduleChangeLog[] @relation("ScheduleChangeActor")
+  inventoryMovements InventoryMovement[] @relation("InventoryMovementActor")
+  receiptsCreated GoodsReceipt[] @relation("GoodsReceiptCreator")
+  receiptsPosted  GoodsReceipt[] @relation("GoodsReceiptPoster")
+  stockDocumentsCreated StockDocument[] @relation("StockDocumentCreator")
+  stockDocumentsPosted  StockDocument[] @relation("StockDocumentPoster")
+  shiftCountsCreated  ShiftStockCount[] @relation("ShiftCountCreator")
+  shiftCountsApproved ShiftStockCount[] @relation("ShiftCountApprover")
+  transferReceiptsCreated TransferReceipt[] @relation("TransferReceiptCreator")
+  transferReceiptsReceived TransferReceipt[] @relation("TransferReceiptReceiver")
+  salesReportsCreated SalesReport[] @relation("SalesReportCreator")
+  salesReportsSubmitted SalesReport[] @relation("SalesReportSubmitter")
+  salesReportsReviewed SalesReport[] @relation("SalesReportReviewer")
+  salesRevisions SalesReportRevision[] @relation("SalesRevisionCreator")
+  salesReportEvents SalesReportEvent[]
+  salesRecipeEvidenceAttestations SalesRecipeEvidence[]
+  warehouseWorkerAssignments WarehouseWorkerAssignment[]
+  warehouseMovements WarehouseInventoryMovement[] @relation("WarehouseMovementActor")
+  warehouseReceiptsCreated WarehouseReceipt[] @relation("WarehouseReceiptCreator")
+  warehouseReceiptsPosted WarehouseReceipt[] @relation("WarehouseReceiptPoster")
+  productionBatchesCreated ProductionBatch[] @relation("ProductionBatchCreator")
+  productionBatchesPosted ProductionBatch[] @relation("ProductionBatchPoster")
+  deliveryTripsCreated DeliveryTrip[] @relation("DeliveryTripCreator")
+  deliveryTripsCourier DeliveryTrip[] @relation("DeliveryTripCourier")
+  deliveryTripsDispatched DeliveryTrip[] @relation("DeliveryTripDispatcher")
+  deliveryStopsReceived DeliveryStop[] @relation("DeliveryStopReceiver")
+  restockPlansCreated RestockPlan[] @relation("RestockPlanCreator")
+  restockPlansReviewed RestockPlan[] @relation("RestockPlanReviewer")
+  restockPlanEvents RestockPlanEvent[]
+  deliveryDiscrepanciesResolved DeliveryDiscrepancy[] @relation("DiscrepancyResolver")
+  deliveryDiscrepancyEvents DeliveryDiscrepancyEvent[]
+  recoveryRequestsCreated DeliveryRecoveryAdjustment[] @relation("RecoveryRequestCreator")
+  recoveryRequestsReviewed DeliveryRecoveryAdjustment[] @relation("RecoveryRequestReviewer")
+  recoveryAdjustmentEvents DeliveryRecoveryAdjustmentEvent[]
+  writeOffsCreated StockWriteOff[] @relation("WriteOffCreator")
+  writeOffsReviewed StockWriteOff[] @relation("WriteOffReviewer")
+  writeOffEvents StockWriteOffEvent[]
+
+  @@index([branchId, isActive])
+  @@index([areaId, role, isActive])
+  @@map("users")
+}
+
+enum InventoryMovementKind {
+  OPENING
+  RECEIPT
+  ISSUE
+  TRANSFER_IN
+  TRANSFER_OUT
+  COUNT_ADJUSTMENT
+  RECIPE_CONSUMPTION
+  WRITE_OFF
+}
+
+model InventoryBalance {
+  branchId     String   @map("branch_id") @db.Uuid
+  ingredientId String   @map("ingredient_id") @db.Uuid
+  quantity     Decimal  @default(0) @db.Decimal(18, 6)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  branch     Branch     @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([branchId, ingredientId])
+  @@index([ingredientId])
+  @@map("inventory_balances")
+}
+
+model InventoryMovement {
+  id            String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId      String                @map("branch_id") @db.Uuid
+  ingredientId  String                @map("ingredient_id") @db.Uuid
+  actorId       String                @map("actor_id") @db.Uuid
+  kind          InventoryMovementKind
+  sourceId      String                @map("source_id") @db.Uuid
+  delta         Decimal               @db.Decimal(18, 6)
+  quantityAfter Decimal               @map("quantity_after") @db.Decimal(18, 6)
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  branch     Branch     @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor      User       @relation("InventoryMovementActor", fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([kind, sourceId, branchId, ingredientId])
+  @@index([branchId, ingredientId, createdAt])
+  @@index([actorId])
+  @@map("inventory_movements")
+}
+
+enum GoodsReceiptStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+model GoodsReceipt {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code         String             @unique @db.VarChar(40)
+  branchId     String             @map("branch_id") @db.Uuid
+  supplierName String?            @map("supplier_name") @db.VarChar(160)
+  note         String?            @db.VarChar(500)
+  status       GoodsReceiptStatus @default(DRAFT)
+  createdById  String             @map("created_by_id") @db.Uuid
+  postedById   String?            @map("posted_by_id") @db.Uuid
+  postedAt     DateTime?          @map("posted_at") @db.Timestamptz(6)
+  createdAt    DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  branch    Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User               @relation("GoodsReceiptCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  postedBy  User?              @relation("GoodsReceiptPoster", fields: [postedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  items     GoodsReceiptItem[]
+
+  @@index([branchId, status, createdAt])
+  @@map("goods_receipts")
+}
+
+model GoodsReceiptItem {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiptId    String   @map("receipt_id") @db.Uuid
+  ingredientId String   @map("ingredient_id") @db.Uuid
+  quantity     Decimal  @db.Decimal(18, 6)
+  unitCost     Decimal  @map("unit_cost") @db.Decimal(18, 4)
+
+  receipt    GoodsReceipt @relation(fields: [receiptId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient   @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([receiptId, ingredientId])
+  @@index([ingredientId])
+  @@map("goods_receipt_items")
+}
+
+enum StockDocumentType {
+  ISSUE
+  TRANSFER
+}
+
+enum StockDocumentStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+model StockDocument {
+  legacyReceivingRequired Boolean @default(false) @map("legacy_receiving_required")
+  id                  String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                String              @unique @db.VarChar(40)
+  type                StockDocumentType
+  status              StockDocumentStatus @default(DRAFT)
+  sourceBranchId      String              @map("source_branch_id") @db.Uuid
+  destinationBranchId String?             @map("destination_branch_id") @db.Uuid
+  note                String?             @db.VarChar(500)
+  createdById         String              @map("created_by_id") @db.Uuid
+  postedById          String?             @map("posted_by_id") @db.Uuid
+  postedAt            DateTime?           @map("posted_at") @db.Timestamptz(6)
+  createdAt           DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sourceBranch      Branch  @relation("StockDocumentSourceBranch", fields: [sourceBranchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  destinationBranch Branch? @relation("StockDocumentDestinationBranch", fields: [destinationBranchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy         User    @relation("StockDocumentCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  postedBy          User?   @relation("StockDocumentPoster", fields: [postedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  items             StockDocumentItem[]
+  transferReceipt   TransferReceipt?
+
+  @@index([type, sourceBranchId, status, createdAt])
+  @@index([destinationBranchId, status, createdAt])
+  @@map("stock_documents")
+}
+
+model StockDocumentItem {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId   String  @map("document_id") @db.Uuid
+  ingredientId String  @map("ingredient_id") @db.Uuid
+  quantity     Decimal @db.Decimal(18, 6)
+
+  document   StockDocument @relation(fields: [documentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient    @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([documentId, ingredientId])
+  @@index([ingredientId])
+  @@map("stock_document_items")
+}
+
+enum WorkShift {
+  MORNING
+  AFTERNOON
+  EVENING
+}
+
+// Flexible work scheduling is separate from the legacy users.branch_id field.
+model StaffAvailability {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  businessDate DateTime @map("business_date") @db.Date
+  shift        WorkShift
+  available    Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([userId, businessDate, shift])
+  @@index([businessDate, shift])
+  @@map("staff_availability")
+}
+
+model ShiftAssignment {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  branchId     String   @map("branch_id") @db.Uuid
+  businessDate DateTime @map("business_date") @db.Date
+  shift        WorkShift
+  status       String   @default("SCHEDULED") @db.VarChar(16)
+  version      Int      @default(1)
+  assignedById String   @map("assigned_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user        User @relation("AssignedStaff", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  branch      Branch @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  assignedBy  User @relation("AssignmentPlanner", fields: [assignedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  changes     ScheduleChangeLog[]
+
+  @@unique([userId, businessDate, shift])
+  @@index([branchId, businessDate, shift])
+  @@map("shift_assignments")
+}
+
+model ScheduleChangeLog {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assignmentId String   @map("assignment_id") @db.Uuid
+  actorId      String   @map("actor_id") @db.Uuid
+  action       String   @db.VarChar(32)
+  previousBranchId String? @map("previous_branch_id") @db.Uuid
+  nextBranchId String? @map("next_branch_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  assignment ShiftAssignment @relation(fields: [assignmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor User @relation("ScheduleChangeActor", fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([assignmentId, createdAt])
+  @@map("schedule_change_logs")
+}
+
+enum ShiftStockCountStatus {
+  DRAFT
+  SUBMITTED
+  RETURNED
+  APPROVED
+}
+
+model ShiftStockCount {
+  id            String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId      String                @map("branch_id") @db.Uuid
+  businessDate  DateTime              @map("business_date") @db.Date
+  shift         WorkShift
+  status        ShiftStockCountStatus @default(DRAFT)
+  note          String?               @db.VarChar(500)
+  returnReason  String?               @map("return_reason") @db.VarChar(500)
+  createdById   String                @map("created_by_id") @db.Uuid
+  approvedById  String?               @map("approved_by_id") @db.Uuid
+  submittedAt   DateTime?             @map("submitted_at") @db.Timestamptz(6)
+  submittedReceivingRevision Int?     @map("submitted_receiving_revision")
+  submittedInventoryRevision Int?     @map("submitted_inventory_revision")
+  approvedAt    DateTime?             @map("approved_at") @db.Timestamptz(6)
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  branch     Branch                @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy  User                  @relation("ShiftCountCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  approvedBy User?                 @relation("ShiftCountApprover", fields: [approvedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  items      ShiftStockCountItem[]
+
+  @@unique([branchId, businessDate, shift])
+  @@index([branchId, status, businessDate])
+  @@map("shift_stock_counts")
+}
+
+model ShiftStockCountItem {
+  countId          String   @map("count_id") @db.Uuid
+  ingredientId     String   @map("ingredient_id") @db.Uuid
+  countedQuantity  Decimal  @map("counted_quantity") @db.Decimal(18, 6)
+  expectedQuantity Decimal? @map("expected_quantity") @db.Decimal(18, 6)
+  variance         Decimal? @db.Decimal(18, 6)
+
+  count      ShiftStockCount @relation(fields: [countId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient      @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([countId, ingredientId])
+  @@index([ingredientId])
+  @@map("shift_stock_count_items")
+}
+
+enum DemandDayType {
+  WEEKDAY
+  WEEKEND
+  HOLIDAY
+}
+
+model DemandCalendarOverride {
+  businessDate DateTime      @id @map("business_date") @db.Date
+  dayType      DemandDayType @map("day_type")
+  note         String?       @db.VarChar(200)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("demand_calendar_overrides")
+}
+
+enum TransferReceiptStatus {
+  DRAFT
+  CONFIRMED
+}
+
+model TransferReceipt {
+  id              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stockDocumentId String                @unique @map("stock_document_id") @db.Uuid
+  status          TransferReceiptStatus @default(DRAFT)
+  version         Int                   @default(1)
+  note            String?               @db.VarChar(500)
+  createdById     String                @map("created_by_id") @db.Uuid
+  receivedById    String?               @map("received_by_id") @db.Uuid
+  confirmedAt     DateTime?             @map("confirmed_at") @db.Timestamptz(6)
+  physicalReceivedAt DateTime?          @map("physical_received_at") @db.Timestamptz(6)
+  legacyEvidence  String?               @map("legacy_evidence") @db.VarChar(1000)
+  createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  stockDocument StockDocument @relation(fields: [stockDocumentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User @relation("TransferReceiptCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  receivedBy User? @relation("TransferReceiptReceiver", fields: [receivedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  items TransferReceiptItem[]
+
+  @@index([status, updatedAt])
+  @@index([createdById])
+  @@index([receivedById])
+  @@map("transfer_receipts")
+}
+
+model TransferReceiptItem {
+  receiptId         String   @map("receipt_id") @db.Uuid
+  ingredientId      String   @map("ingredient_id") @db.Uuid
+  ingredientCode    String   @map("ingredient_code") @db.VarChar(64)
+  ingredientName    String   @map("ingredient_name") @db.VarChar(200)
+  unit              BaseUnit
+  plannedQuantity   Decimal  @map("planned_quantity") @db.Decimal(18, 6)
+  receivedQuantity  Decimal  @map("received_quantity") @db.Decimal(18, 6)
+  damagedQuantity   Decimal  @map("damaged_quantity") @db.Decimal(18, 6)
+  discrepancyReason String?  @map("discrepancy_reason") @db.VarChar(300)
+
+  receipt TransferReceipt @relation(fields: [receiptId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([receiptId, ingredientId])
+  @@index([ingredientId])
+  @@map("transfer_receipt_items")
+}
+
+enum SalesReportStatus {
+  DRAFT
+  SUBMITTED
+  RETURNED
+  APPROVED
+}
+
+enum SalesPaymentChannel {
+  CASH
+  BANK_TRANSFER
+  MOMO
+  GRAB
+  OTHER
+}
+
+enum SalesReportEventType {
+  CREATED
+  UPDATED
+  SUBMITTED
+  RETURNED
+  APPROVED
+}
+
+model SalesReport {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId String @map("branch_id") @db.Uuid
+  businessDate DateTime @map("business_date") @db.Date
+  shift WorkShift
+  status SalesReportStatus @default(DRAFT)
+  version Int @default(1)
+  currentRevisionNumber Int @default(1) @map("current_revision_number")
+  submittedRevisionNumber Int? @map("submitted_revision_number")
+  approvedRevisionNumber Int? @map("approved_revision_number")
+  createdById String @map("created_by_id") @db.Uuid
+  submittedById String? @map("submitted_by_id") @db.Uuid
+  reviewedById String? @map("reviewed_by_id") @db.Uuid
+  submittedAt DateTime? @map("submitted_at") @db.Timestamptz(6)
+  reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  approvedAt DateTime? @map("approved_at") @db.Timestamptz(6)
+  returnReason String? @map("return_reason") @db.VarChar(1000)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User @relation("SalesReportCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  submittedBy User? @relation("SalesReportSubmitter", fields: [submittedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reviewedBy User? @relation("SalesReportReviewer", fields: [reviewedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  revisions SalesReportRevision[]
+  events SalesReportEvent[]
+
+  @@unique([branchId, businessDate, shift])
+  @@index([branchId, status, businessDate])
+  @@index([status, businessDate])
+  @@index([createdById])
+  @@index([submittedById])
+  @@index([reviewedById])
+  @@map("sales_reports")
+}
+
+// Every save appends a complete revision; submitted snapshots are never edited.
+model SalesReportRevision {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId String @map("report_id") @db.Uuid
+  number Int
+  createdById String @map("created_by_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  note String? @db.VarChar(1500)
+  discounts Decimal @db.Decimal(18, 0)
+  recognizedRefunds Decimal @map("recognized_refunds") @db.Decimal(18, 0)
+  grossSales Decimal @map("gross_sales") @db.Decimal(18, 0)
+  netExpected Decimal @map("net_expected") @db.Decimal(18, 0)
+  netRecorded Decimal @map("net_recorded") @db.Decimal(18, 0)
+  salesDifference Decimal @map("sales_difference") @db.Decimal(18, 0)
+  expectedCash Decimal @map("expected_cash") @db.Decimal(18, 0)
+  cashDifference Decimal? @map("cash_difference") @db.Decimal(18, 0)
+
+  report SalesReport @relation(fields: [reportId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User @relation("SalesRevisionCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lines SalesReportLine[]
+  payments SalesPayment[]
+  expenses SalesExpense[]
+  cash CashReconciliation?
+  events SalesReportEvent[]
+
+  @@unique([reportId, number])
+  @@index([createdById])
+  @@map("sales_report_revisions")
+}
+
+model SalesReportLine {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  revisionId String @map("revision_id") @db.Uuid
+  position Int
+  productId String? @map("product_id") @db.Uuid
+  productNameSnapshot String @map("product_name_snapshot") @db.VarChar(200)
+  size String @db.VarChar(10)
+  unitPriceSnapshot Decimal @map("unit_price_snapshot") @db.Decimal(18, 0)
+  quantity Int
+  note String? @db.VarChar(240)
+
+  revision SalesReportRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  product Product? @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  recipeEvidence SalesRecipeEvidence?
+
+  @@unique([revisionId, position])
+  @@index([productId])
+  @@map("sales_report_lines")
+}
+
+model SalesPayment {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  revisionId String @map("revision_id") @db.Uuid
+  channel SalesPaymentChannel
+  collectedAmount Decimal @map("collected_amount") @db.Decimal(18, 0)
+  refundedAmount Decimal @map("refunded_amount") @db.Decimal(18, 0)
+  platformFee Decimal @map("platform_fee") @db.Decimal(18, 0)
+  settlementDifference Decimal @map("settlement_difference") @db.Decimal(18, 0)
+  note String? @db.VarChar(300)
+  revision SalesReportRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([revisionId, channel])
+  @@map("sales_report_payments")
+}
+
+model SalesExpense {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  revisionId String @map("revision_id") @db.Uuid
+  position Int
+  channel SalesPaymentChannel
+  description String @db.VarChar(300)
+  amount Decimal @db.Decimal(18, 0)
+  revision SalesReportRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([revisionId, position])
+  @@map("sales_report_expenses")
+}
+
+model CashReconciliation {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  revisionId String @unique @map("revision_id") @db.Uuid
+  openingCash Decimal @map("opening_cash") @db.Decimal(18, 0)
+  cashHandovers Decimal @map("cash_handovers") @db.Decimal(18, 0)
+  closingCashActual Decimal? @map("closing_cash_actual") @db.Decimal(18, 0)
+  revision SalesReportRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@map("sales_cash_reconciliations")
+}
+
+model SalesReportEvent {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId String @map("report_id") @db.Uuid
+  revisionNumber Int @map("revision_number")
+  actorId String @map("actor_id") @db.Uuid
+  type SalesReportEventType
+  reason String? @db.VarChar(1000)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  report SalesReport @relation(fields: [reportId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  revision SalesReportRevision @relation(fields: [reportId, revisionNumber], references: [reportId, number], onDelete: Restrict, onUpdate: Restrict)
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([reportId, createdAt])
+  @@index([actorId])
+  @@map("sales_report_events")
+}
+
+// AI5: A human-attested recipe snapshot for a single approved W7.3 line.
+// Never created automatically from today's Catalog; append-only DB trigger.
+model SalesRecipeEvidence {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  salesLineId String @unique @map("sales_line_id") @db.Uuid
+  recipeId String @map("recipe_id") @db.Uuid
+  recipeVersion Int @map("recipe_version")
+  productVariantId String @map("product_variant_id") @db.Uuid
+  productId String @map("product_id") @db.Uuid
+  size ProductSize
+  ingredientSnapshot Json @map("ingredient_snapshot") @db.JsonB
+  recipeCreatedAt DateTime @map("recipe_created_at") @db.Timestamptz(6)
+  attestedById String @map("attested_by_id") @db.Uuid
+  attestedAt DateTime @default(now()) @map("attested_at") @db.Timestamptz(6)
+  attestationNote String @map("attestation_note") @db.VarChar(500)
+
+  line SalesReportLine @relation(fields: [salesLineId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  attestedBy User @relation(fields: [attestedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([attestedAt])
+  @@index([recipeId])
+  @@map("sales_recipe_evidence")
+}
+
+// G3: A central kitchen warehouse is distinct from a retail branch.
+// Production consumes catalog Ingredient input and creates prepared Ingredient output.
+// Every stock mutation is recorded once in an append-only warehouse movement ledger.
+model Warehouse {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      String   @unique @db.VarChar(32)
+  name      String   @db.VarChar(150)
+  address   String?  @db.VarChar(255)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workers    WarehouseWorkerAssignment[]
+  balances   WarehouseInventoryBalance[]
+  movements  WarehouseInventoryMovement[]
+  receipts   WarehouseReceipt[]
+  batches    ProductionBatch[]
+  deliveryTrips DeliveryTrip[]
+
+  restockPlans RestockPlan[]
+  stockWriteOffs StockWriteOff[]
+
+  @@map("warehouses")
+}
+
+model WarehouseWorkerAssignment {
+  warehouseId String   @map("warehouse_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([warehouseId, userId])
+  @@index([userId, isActive])
+  @@map("warehouse_worker_assignments")
+}
+
+model WarehouseInventoryBalance {
+  warehouseId  String   @map("warehouse_id") @db.Uuid
+  ingredientId String   @map("ingredient_id") @db.Uuid
+  quantity     Decimal  @default(0) @db.Decimal(18, 6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  warehouse  Warehouse  @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([warehouseId, ingredientId])
+  @@index([ingredientId])
+  @@map("warehouse_inventory_balances")
+}
+
+model WarehouseInventoryMovement {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  warehouseId   String   @map("warehouse_id") @db.Uuid
+  ingredientId  String   @map("ingredient_id") @db.Uuid
+  actorId       String   @map("actor_id") @db.Uuid
+  kind          String   @db.VarChar(24)
+  sourceId      String   @map("source_id") @db.Uuid
+  delta         Decimal  @db.Decimal(18, 6)
+  quantityAfter Decimal  @map("quantity_after") @db.Decimal(18, 6)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  warehouse  Warehouse  @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor      User       @relation("WarehouseMovementActor", fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([kind, sourceId, warehouseId, ingredientId])
+  @@index([warehouseId, createdAt])
+  @@map("warehouse_inventory_movements")
+}
+
+model WarehouseReceipt {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code         String    @unique @db.VarChar(40)
+  warehouseId  String    @map("warehouse_id") @db.Uuid
+  supplierName String?   @map("supplier_name") @db.VarChar(160)
+  note         String?   @db.VarChar(500)
+  status       String    @default("DRAFT") @db.VarChar(16)
+  createdById  String    @map("created_by_id") @db.Uuid
+  postedById   String?   @map("posted_by_id") @db.Uuid
+  postedAt     DateTime? @map("posted_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User @relation("WarehouseReceiptCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  postedBy User? @relation("WarehouseReceiptPoster", fields: [postedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  items WarehouseReceiptItem[]
+
+  @@index([warehouseId, status, createdAt])
+  @@map("warehouse_receipts")
+}
+
+model WarehouseReceiptItem {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiptId    String  @map("receipt_id") @db.Uuid
+  ingredientId String  @map("ingredient_id") @db.Uuid
+  quantity     Decimal @db.Decimal(18, 6)
+  unitCost     Decimal @map("unit_cost") @db.Decimal(18, 4)
+
+  receipt    WarehouseReceipt @relation(fields: [receiptId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient       @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([receiptId, ingredientId])
+  @@map("warehouse_receipt_items")
+}
+
+model ProductionBatch {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String    @unique @db.VarChar(40)
+  warehouseId String    @map("warehouse_id") @db.Uuid
+  note        String?   @db.VarChar(500)
+  status      String    @default("DRAFT") @db.VarChar(16)
+  createdById String    @map("created_by_id") @db.Uuid
+  postedById  String?   @map("posted_by_id") @db.Uuid
+  postedAt    DateTime? @map("posted_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User @relation("ProductionBatchCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  postedBy User? @relation("ProductionBatchPoster", fields: [postedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  inputs  ProductionBatchInput[]
+  outputs ProductionBatchOutput[]
+
+  @@index([warehouseId, status, createdAt])
+  @@map("production_batches")
+}
+
+model ProductionBatchInput {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchId      String  @map("batch_id") @db.Uuid
+  ingredientId String  @map("ingredient_id") @db.Uuid
+  quantity     Decimal @db.Decimal(18, 6)
+
+  batch      ProductionBatch @relation(fields: [batchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient      @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([batchId, ingredientId])
+  @@map("production_batch_inputs")
+}
+
+model ProductionBatchOutput {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchId      String  @map("batch_id") @db.Uuid
+  ingredientId String  @map("ingredient_id") @db.Uuid
+  quantity     Decimal @db.Decimal(18, 6)
+
+  batch      ProductionBatch @relation(fields: [batchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient      @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([batchId, ingredientId])
+  @@map("production_batch_outputs")
+}
+
+// G4: morning distribution from a central kitchen to several branches.
+// Warehouse decreases at dispatch. Each branch increases ONLY after physical confirmation.
+model DeliveryTrip {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code         String    @unique @db.VarChar(40)
+  warehouseId  String    @map("warehouse_id") @db.Uuid
+  businessDate DateTime  @map("business_date") @db.Date
+  status       String    @default("DRAFT") @db.VarChar(16)
+  courierId    String?   @map("courier_id") @db.Uuid
+  note         String?   @db.VarChar(500)
+  createdById  String    @map("created_by_id") @db.Uuid
+  dispatchedById String? @map("dispatched_by_id") @db.Uuid
+  dispatchedAt DateTime? @map("dispatched_at") @db.Timestamptz(6)
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz(6)
+  receivedStops Int      @default(0) @map("received_stops")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  warehouse    Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  courier      User? @relation("DeliveryTripCourier", fields: [courierId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy    User @relation("DeliveryTripCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  dispatchedBy User? @relation("DeliveryTripDispatcher", fields: [dispatchedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  stops        DeliveryStop[]
+  restockPlan RestockPlan?
+
+  @@index([warehouseId, businessDate, status])
+  @@index([courierId, businessDate])
+  @@map("delivery_trips")
+}
+
+model DeliveryStop {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tripId        String    @map("trip_id") @db.Uuid
+  branchId      String    @map("branch_id") @db.Uuid
+  stopOrder     Int       @map("stop_order")
+  status        String    @default("PLANNED") @db.VarChar(16)
+  note          String?   @db.VarChar(500)
+  receivedById  String?   @map("received_by_id") @db.Uuid
+  receivedAt    DateTime? @map("received_at") @db.Timestamptz(6)
+
+  trip       DeliveryTrip @relation(fields: [tripId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  branch     Branch @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  receivedBy User? @relation("DeliveryStopReceiver", fields: [receivedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  items      DeliveryStopItem[]
+  discrepancy DeliveryDiscrepancy?
+
+  @@unique([tripId, branchId])
+  @@unique([tripId, stopOrder])
+  @@index([branchId, status])
+  @@map("delivery_stops")
+}
+
+model DeliveryStopItem {
+  stopId           String   @map("stop_id") @db.Uuid
+  ingredientId     String   @map("ingredient_id") @db.Uuid
+  plannedQuantity  Decimal  @map("planned_quantity") @db.Decimal(18, 6)
+  receivedQuantity Decimal? @map("received_quantity") @db.Decimal(18, 6)
+  damagedQuantity  Decimal? @map("damaged_quantity") @db.Decimal(18, 6)
+
+  stop       DeliveryStop @relation(fields: [stopId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([stopId, ingredientId])
+  @@index([ingredientId])
+  @@map("delivery_stop_items")
+}
+
+// G6: immutable submitted restock proposal; admin review and atomic conversion into G4 DRAFT.
+// A proposal belongs to exactly one area. No stock movement occurs during approval/conversion.
+model RestockPlan {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  areaId String @map("area_id") @db.Uuid
+  warehouseId String @map("warehouse_id") @db.Uuid
+  submissionKey String @unique @map("submission_key") @db.Uuid
+  businessDate DateTime @map("business_date") @db.Date
+  status String @default("SUBMITTED") @db.VarChar(16)
+  note String? @db.VarChar(500)
+  createdById String @map("created_by_id") @db.Uuid
+  reviewedById String? @map("reviewed_by_id") @db.Uuid
+  reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  reviewNote String? @map("review_note") @db.VarChar(500)
+  convertedAt DateTime? @map("converted_at") @db.Timestamptz(6)
+  deliveryTripId String? @unique @map("delivery_trip_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  area Area @relation(fields: [areaId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User @relation("RestockPlanCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reviewedBy User? @relation("RestockPlanReviewer", fields: [reviewedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  deliveryTrip DeliveryTrip? @relation(fields: [deliveryTripId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lines RestockPlanLine[]
+  events RestockPlanEvent[]
+  @@index([areaId, businessDate, status], map: "restock_plans_area_date_status_idx")
+  @@index([warehouseId, businessDate], map: "restock_plans_warehouse_date_idx")
+  @@map("restock_plans")
+}
+
+model RestockPlanLine {
+  planId String @map("plan_id") @db.Uuid
+  branchId String @map("branch_id") @db.Uuid
+  ingredientId String @map("ingredient_id") @db.Uuid
+  quantity Decimal @db.Decimal(18, 6)
+  plan RestockPlan @relation(fields: [planId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@id([planId, branchId, ingredientId])
+  @@map("restock_plan_lines")
+}
+
+model RestockPlanEvent {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  planId String @map("plan_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  action String @db.VarChar(20)
+  note String? @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  plan RestockPlan @relation(fields: [planId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@index([planId, createdAt], map: "restock_plan_events_plan_time_idx")
+  @@map("restock_plan_events")
+}
+
+// G6: discrepancy case is created by physical receiving, even if a stop is already complete.
+// Resolution is classification only; no hidden inventory adjustment.
+model DeliveryDiscrepancy {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stopId String @unique @map("stop_id") @db.Uuid
+  status String @default("OPEN") @db.VarChar(16)
+  classification String? @db.VarChar(32)
+  resolutionNote String? @map("resolution_note") @db.VarChar(500)
+  resolvedById String? @map("resolved_by_id") @db.Uuid
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  stop DeliveryStop @relation(fields: [stopId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  resolvedBy User? @relation("DiscrepancyResolver", fields: [resolvedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  events DeliveryDiscrepancyEvent[]
+  recoveryAdjustments DeliveryRecoveryAdjustment[]
+  @@index([status, createdAt], map: "delivery_discrepancies_status_time_idx")
+  @@map("delivery_discrepancies")
+}
+
+model DeliveryDiscrepancyEvent {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  discrepancyId String @map("discrepancy_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  action String @db.VarChar(20)
+  note String? @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  discrepancy DeliveryDiscrepancy @relation(fields: [discrepancyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@index([discrepancyId, createdAt], map: "delivery_discrepancy_events_case_time_idx")
+  @@map("delivery_discrepancy_events")
+}
+
+// G7: only physically recovered missing goods may be added to branch stock.
+// Damaged or still-missing goods were never credited in G4; they are NOT adjusted again.
+// Each POSTED request has immutable lines and one inventory movement per SKU.
+model DeliveryRecoveryAdjustment {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  discrepancyId String    @map("discrepancy_id") @db.Uuid
+  branchId      String    @map("branch_id") @db.Uuid
+  submissionKey String    @unique @map("submission_key") @db.Uuid
+  status        String    @default("SUBMITTED") @db.VarChar(16)
+  evidence      String    @db.VarChar(500)
+  createdById   String    @map("created_by_id") @db.Uuid
+  reviewedById  String?   @map("reviewed_by_id") @db.Uuid
+  reviewNote    String?   @map("review_note") @db.VarChar(500)
+  reviewedAt    DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  discrepancy DeliveryDiscrepancy @relation(fields: [discrepancyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  branch      Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy   User                @relation("RecoveryRequestCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reviewedBy  User?               @relation("RecoveryRequestReviewer", fields: [reviewedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lines       DeliveryRecoveryAdjustmentItem[]
+  events      DeliveryRecoveryAdjustmentEvent[]
+
+  @@index([discrepancyId, status, createdAt], map: "delivery_recovery_adjustments_case_status_idx")
+  @@index([branchId, status, createdAt], map: "delivery_recovery_adjustments_branch_status_idx")
+  @@map("delivery_recovery_adjustments")
+}
+
+model DeliveryRecoveryAdjustmentItem {
+  adjustmentId String  @map("adjustment_id") @db.Uuid
+  ingredientId String  @map("ingredient_id") @db.Uuid
+  quantity     Decimal @db.Decimal(18, 6)
+
+  adjustment DeliveryRecoveryAdjustment @relation(fields: [adjustmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient               @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([adjustmentId, ingredientId])
+  @@map("delivery_recovery_adjustment_items")
+}
+
+model DeliveryRecoveryAdjustmentEvent {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  adjustmentId String    @map("adjustment_id") @db.Uuid
+  actorId      String    @map("actor_id") @db.Uuid
+  action       String    @db.VarChar(20)
+  note         String?   @db.VarChar(500)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  adjustment DeliveryRecoveryAdjustment @relation(fields: [adjustmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor      User                       @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([adjustmentId, createdAt], map: "delivery_recovery_events_adjustment_time_idx")
+  @@map("delivery_recovery_adjustment_events")
+}
+
+// G8: approval-only stock write-off. Scope is exactly one BRANCH or WAREHOUSE.
+// A draft is not posted; posting decrements the appropriate existing ledger once.
+model StockWriteOff {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  submissionKey String @unique @map("submission_key") @db.Uuid
+  branchId String? @map("branch_id") @db.Uuid
+  warehouseId String? @map("warehouse_id") @db.Uuid
+  reason String @db.VarChar(24)
+  evidence String @db.VarChar(500)
+  status String @default("SUBMITTED") @db.VarChar(16)
+  createdById String @map("created_by_id") @db.Uuid
+  reviewedById String? @map("reviewed_by_id") @db.Uuid
+  reviewNote String? @map("review_note") @db.VarChar(500)
+  reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  branch Branch? @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  warehouse Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User @relation("WriteOffCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reviewedBy User? @relation("WriteOffReviewer", fields: [reviewedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lines StockWriteOffItem[]
+  events StockWriteOffEvent[]
+
+  @@index([branchId, status, createdAt], map: "stock_writeoffs_branch_status_idx")
+  @@index([warehouseId, status, createdAt], map: "stock_writeoffs_warehouse_status_idx")
+  @@map("stock_writeoffs")
+}
+
+model StockWriteOffItem {
+  writeOffId String @map("write_off_id") @db.Uuid
+  ingredientId String @map("ingredient_id") @db.Uuid
+  quantity Decimal @db.Decimal(18, 6)
+  writeOff StockWriteOff @relation(fields: [writeOffId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@id([writeOffId, ingredientId])
+  @@map("stock_writeoff_items")
+}
+
+model StockWriteOffEvent {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  writeOffId String @map("write_off_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  action String @db.VarChar(20)
+  note String? @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  writeOff StockWriteOff @relation(fields: [writeOffId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@index([writeOffId, createdAt], map: "stock_writeoff_events_writeoff_time_idx")
+  @@map("stock_writeoff_events")
 }

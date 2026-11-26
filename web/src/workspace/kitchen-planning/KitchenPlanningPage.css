@@ -1,0 +1,38 @@
+.wh-g5 { display:grid; gap:1.1rem; }
+.wh-g5-metrics { display:grid; grid-template-columns: repeat(auto-fit,minmax(145px,1fr)); gap:.7rem; }
+.wh-g5-metrics>div { border:1px solid #d9e3e7; border-radius:12px; padding:1rem; background:#fff; display:grid; gap:.25rem; }
+.wh-g5-metrics strong { font-size:1.8rem; color:#195a63; }
+.wh-g5-metrics span { color:#51636b; font-size:.9rem; }
+.wh-g5-form, .wh-g5-preview { display:grid; gap:1rem; border:1px solid #d6e3e5; background:#fff; padding:1.2rem; border-radius:12px; }
+.wh-g5-form label, .wh-g5-approve label { display:grid; gap:.4rem; }
+.wh-g5-form input:not([type=checkbox]), .wh-g5-form select, .wh-g5-approve input, .wh-g5-approve select { width:100%; padding:.65rem; border:1px solid #b9cccf; border-radius:8px; }
+.wh-g5-branches { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:.7rem; max-height:220px; overflow-y:auto; padding:.6rem; }
+.wh-g5-branches label, .wh-g5-inline { display:flex!important; align-items:center; gap:.5rem; }
+.wh-g5-table { overflow-x:auto; }
+.wh-g5-table table { min-width:1050px; width:100%; border-collapse:collapse; font-size:.89rem; }
+.wh-g5-table td,.wh-g5-table th { padding:.6rem; border-bottom:1px solid #e5ecee; text-align:left; }
+.wh-g5-table th { background:#eaf3f5; }
+.wh-g5-approve { border-top:1px solid #e0e7e9; padding-top:1rem; display:grid; gap:.8rem; }
+.wh-g5-warning { border-left:3px solid #b77a1b; padding:.7rem; background:#fff8e9; }
+.wh-g5-success { background:#effaf5; padding:.75rem; color:#1f6c4c; border-radius:8px; }
+.wh-g6-toolbar {display:flex;flex-wrap:wrap;gap:.75rem;align-items:end}
+.wh-g6-toolbar label,.wh-g6-review label{display:grid;gap:.35rem}
+.wh-g6-toolbar input,.wh-g6-review input,.wh-g6-review select,.wh-g6-review textarea{padding:.6rem;border:1px solid #b9cccf;border-radius:8px}
+.wh-g6-list {display:grid;gap:1rem}
+.wh-g6-card {background:#fff;border:1px solid #d9e3e7;border-radius:12px;padding:1rem;display:grid;gap:.6rem}
+.wh-g6-card header{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.wh-g6-review{display:grid;gap:.65rem;max-width:600px}
+.wh-g6-review textarea{min-height:85px}
+.wh-g6-card .wh-g5-table table{min-width:540px}
+
+/* G6 independent approval and receiving discrepancy records */
+.wh-g6-card{border:1px solid var(--wh-border,#d7ddd9);border-radius:12px;padding:16px;margin:12px 0;background:var(--wh-surface,#fff)}
+.wh-g6-card header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.wh-g6-card header span{font-size:.85rem;color:#48615c}
+.wh-g6-card p{margin:10px 0}
+.wh-g6-review{display:flex;flex-direction:column;gap:10px;margin:12px 0;padding:12px;background:rgba(125,145,153,.08);border-radius:9px}
+.wh-g6-review label{display:flex;flex-direction:column;gap:5px}
+.wh-g6-review textarea{width:100%;min-height:65px}
+.wh-g6-review button{align-self:flex-start}
+.wh-g6-toolbar{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin:12px 0}
+.wh-g6-list{display:grid;gap:12px}

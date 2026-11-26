@@ -1,260 +1,126 @@
-const { test } = require('node:test');
+﻿const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
-const { ingredientStore, productStore, recipeStore, catalogUsesPostgres, catalogUsesMongo, postgresUrl } = require('../dist/config/postgres');
+const { ingredientStore, productStore, recipeStore, postgresUrl } = require('../dist/config/postgres');
 const { createPrismaRuntime } = require('../dist/db/prisma');
 const fixture = 'postgresql://wavehouse_test:fixture@127.0.0.1:5433/wavehouse_test';
-const config = () => ({ NODE_ENV: 'test', CATALOG_INGREDIENT_STORE: 'postgres', TEST_DATABASE_URL: fixture });
-
-test('Ingredient selection defaults to MongoDB and rejects unsupported or nonlocal opt-ins', () => {
-    assert.equal(ingredientStore({}), 'mongodb');
-    assert.equal(ingredientStore({ NODE_ENV: 'production' }), 'mongodb');
-    for (const env of [{ CATALOG_INGREDIENT_STORE: '' }, { CATALOG_INGREDIENT_STORE: 'POSTGRES' },
-        { CATALOG_INGREDIENT_STORE: 'postgres' }, { NODE_ENV: 'production', CATALOG_INGREDIENT_STORE: 'postgres' }]) assert.throws(() => ingredientStore(env));
+const config = () => ({ NODE_ENV: 'test', TEST_DATABASE_URL: fixture });
+test('PostgreSQL defaults and local/test URL isolation reject legacy and unsafe targets', () => {
+    for (const [select, key] of [[ingredientStore, 'CATALOG_INGREDIENT_STORE'], [productStore, 'CATALOG_PRODUCT_STORE'], [recipeStore, 'CATALOG_RECIPE_STORE']]) {
+        assert.equal(select({}), 'postgres'); assert.equal(select({ [key]: 'postgres' }), 'postgres');
+        for (const mode of ['mongodb', '', 'unknown']) assert.throws(() => select({ [key]: mode }), /must be postgres/);
+    }
     assert.equal(postgresUrl(config()), fixture);
-    assert.equal(postgresUrl({ NODE_ENV: 'development', CATALOG_INGREDIENT_STORE: 'postgres', DATABASE_URL: fixture.replaceAll('wavehouse_test', 'wavehouse_dev') + '?schema=public' }).includes('wavehouse_dev'), true);
-    for (const value of [undefined, 'postgresql://private-password', fixture.replace('127.0.0.1', 'example.com'),
-        fixture.replace('5433', '5432'), fixture.replaceAll('wavehouse_test', 'wavehouse_dev'), fixture + '?schema=public', fixture + '#fragment', fixture.replace(':fixture@', '@')]) {
+    for (const value of [undefined, 'postgresql://private-password', fixture.replace('127.0.0.1', 'example.com'), fixture.replace('5433', '5432'), fixture.replaceAll('wavehouse_test', 'wavehouse_dev'), fixture + '?schema=public', fixture + '#fragment', fixture.replace(':fixture@', '@')]) {
         assert.throws(() => postgresUrl({ ...config(), TEST_DATABASE_URL: value }), e => !e.message.includes('private-password') && !e.message.includes('postgresql://'));
     }
     assert.throws(() => postgresUrl({ ...config(), TEST_DATABASE_URL: undefined, DATABASE_URL: fixture }));
+    assert.throws(() => postgresUrl({ ...config(), CATALOG_POSTGRES_TARGET: 'aiven', AIVEN_DB_PASSWORD: 'fixture' }), /development/);
+    assert.throws(() => postgresUrl({ ...config(), NODE_ENV: 'production' }), /development or test/);
+    const cloud = new URL(postgresUrl({ NODE_ENV: 'development', CATALOG_POSTGRES_TARGET: 'aiven', AIVEN_DB_PASSWORD: 'fixture' }));
+    assert.equal(cloud.username, 'wavehouse_app'); assert.equal(cloud.pathname, '/wavehouse_dev');
 });
-
-test('Product opt-in is independent, validates both flags and retains all local target guards', () => {
-    assert.equal(productStore({}), 'mongodb');
-    for (const ingredient of ['mongodb', 'postgres']) for (const product of ['mongodb', 'postgres']) {
-        const env = { NODE_ENV: 'test', CATALOG_INGREDIENT_STORE: ingredient, CATALOG_PRODUCT_STORE: product, TEST_DATABASE_URL: fixture };
-        assert.equal(catalogUsesPostgres(env), ingredient === 'postgres' || product === 'postgres');
-        if (ingredient === 'postgres' || product === 'postgres') assert.equal(postgresUrl(env), fixture);
-    }
-    for (const env of [{ CATALOG_PRODUCT_STORE: 'postgres' }, { NODE_ENV: 'production', CATALOG_PRODUCT_STORE: 'postgres' },
-        { NODE_ENV: 'test', CATALOG_INGREDIENT_STORE: 'postgres', CATALOG_PRODUCT_STORE: 'unknown' },
-        { NODE_ENV: 'test', CATALOG_INGREDIENT_STORE: 'unknown', CATALOG_PRODUCT_STORE: 'postgres' }]) assert.throws(() => catalogUsesPostgres(env));
-    assert.throws(() => postgresUrl({ NODE_ENV: 'test', CATALOG_PRODUCT_STORE: 'postgres', DATABASE_URL: fixture }));
-});
-
-test('Recipe selection permits exactly five configurations and rejects three mixed stores without implicit flags', () => {
-    let valid = 0, invalid = 0;
-    assert.equal(recipeStore({}), 'mongodb');
-    for (const ingredient of ['mongodb', 'postgres']) for (const product of ['mongodb', 'postgres']) for (const recipe of ['mongodb', 'postgres']) {
-        const env = { NODE_ENV: 'test', CATALOG_INGREDIENT_STORE: ingredient, CATALOG_PRODUCT_STORE: product, CATALOG_RECIPE_STORE: recipe };
-        const before = { ...env };
-        if (recipe === 'postgres' && (ingredient !== 'postgres' || product !== 'postgres')) { assert.throws(() => catalogUsesPostgres(env)); assert.throws(() => catalogUsesMongo(env)); invalid++; }
-        else { assert.equal(recipeStore(env), recipe); catalogUsesPostgres(env); assert.equal(catalogUsesMongo(env), recipe !== 'postgres'); valid++; }
-        assert.deepEqual(env, before);
-    }
-    assert.equal(valid, 5); assert.equal(invalid, 3);
-    for (const env of [{ ...config(), CATALOG_RECIPE_STORE: 'unknown' }, { ...config(), NODE_ENV: 'production', CATALOG_PRODUCT_STORE: 'postgres', CATALOG_RECIPE_STORE: 'postgres' }]) assert.throws(() => catalogUsesPostgres(env));
-    assert.throws(() => postgresUrl({ ...config(), CATALOG_PRODUCT_STORE: 'postgres', CATALOG_RECIPE_STORE: 'postgres', TEST_DATABASE_URL: undefined, DATABASE_URL: fixture }));
-});
-
-test('Prisma lifecycle verifies identity, sanitizes failures and disconnects after failed connect', async t => {
-    const runtime = createPrismaRuntime(config());
-    let closed = 0;
+test('Prisma verifies identity, sanitizes failures and closes failed connections', async () => {
+    const runtime = createPrismaRuntime(config()); let closed = 0;
     runtime.client.$disconnect = async () => { closed++; };
-    runtime.client.$connect = async () => { throw new Error('fixture secret URL'); };
+    runtime.client.$connect = async () => { throw Error('private connection URL'); };
     await assert.rejects(runtime.connect(), e => e.message === 'PostgreSQL connection or role isolation verification failed' && !e.cause);
     assert.equal(closed, 1);
-    runtime.client.$queryRaw = async () => { throw new Error('fixture secret URL'); };
+    runtime.client.$queryRaw = async () => { throw Error('private details'); };
     assert.equal(await runtime.ready(), false);
-    await runtime.close(); assert.equal(closed, 2);
-});
-
-test('Prisma lifecycle rejects live identity mismatches before application traffic', async t => {
-    const runtime = createPrismaRuntime(config());
     runtime.client.$connect = async () => {};
-    runtime.client.$disconnect = async () => {};
     runtime.client.$queryRaw = async () => [{ database: 'wavehouse_dev', role: 'wavehouse_dev' }];
     await assert.rejects(runtime.connect(), /isolation verification failed/);
+    await runtime.close(); assert.equal(closed, 3);
 });
-
-test('compiled CommonJS imports perform no connections and production opt-in fails before startup', () => {
-    const imported = spawnSync(process.execPath, ['-e', "require('./dist/app');require('./dist/server');require('./dist/db/prisma');console.log('imports passed')"], {
-        encoding: 'utf8', timeout: 10000, env: { ...process.env, CATALOG_INGREDIENT_STORE: 'mongodb', CATALOG_PRODUCT_STORE: 'mongodb', CATALOG_RECIPE_STORE: 'mongodb' },
-    });
-    assert.equal(imported.status, 0); assert.match(imported.stdout, /imports passed/);
-    const rejected = spawnSync(process.execPath, ['dist/server.js'], { encoding: 'utf8', timeout: 10000,
-        env: { ...process.env, NODE_ENV: 'production', CATALOG_INGREDIENT_STORE: 'postgres', DATABASE_URL: 'private-password' } });
-    assert.equal(rejected.status, 1); assert.match(rejected.stderr, /configuration or database unavailable/);
-    assert.doesNotMatch(rejected.stderr, /private-password/);
-    const productRejected = spawnSync(process.execPath, ['dist/server.js'], { encoding: 'utf8', timeout: 10000,
-        env: { ...process.env, NODE_ENV: 'production', CATALOG_INGREDIENT_STORE: 'mongodb', CATALOG_PRODUCT_STORE: 'postgres', DATABASE_URL: 'private-password' } });
-    assert.equal(productRejected.status, 1); assert.doesNotMatch(productRejected.stderr, /private-password/);
-    const recipeRejected = spawnSync(process.execPath, ['dist/server.js'], { encoding: 'utf8', timeout: 10000,
-        env: { ...process.env, NODE_ENV: 'production', CATALOG_INGREDIENT_STORE: 'postgres', CATALOG_PRODUCT_STORE: 'postgres', CATALOG_RECIPE_STORE: 'postgres', DATABASE_URL: 'private-password' } });
-    assert.equal(recipeRejected.status, 1); assert.doesNotMatch(recipeRejected.stderr, /private-password/);
+test('Aiven rejects wrong identity, TLS and elevated roles using read-only identity probes', async () => {
+    for (const patch of [{ database: 'postgres' }, { role: 'avnadmin' }, { session: 'avnadmin' }, { tls: false }, { elevated: true }]) {
+        const runtime = createPrismaRuntime({ NODE_ENV: 'development', CATALOG_POSTGRES_TARGET: 'aiven', AIVEN_DB_PASSWORD: 'fixture', AIVEN_CA_PATH: '../ca.pem' });
+        runtime.client.$connect = async () => {};
+        runtime.client.$disconnect = async () => {};
+        runtime.client.$queryRaw = async () => [{ database: 'wavehouse_dev', role: 'wavehouse_app', session: 'wavehouse_app', tls: true, elevated: false, ...patch }];
+        await assert.rejects(runtime.connect(), /isolation verification failed/);
+    }
 });
-
-
-const selections = [
-    ['mongodb', 'mongodb', 'mongodb'], ['postgres', 'mongodb', 'mongodb'],
-    ['mongodb', 'postgres', 'mongodb'], ['postgres', 'postgres', 'mongodb'],
-    ['postgres', 'postgres', 'postgres'],
-];
-
-async function lifecycle(t, modes, run, failure) {
-    const mongoose = require('mongoose');
-    const net = require('node:net');
-    const runtimeModule = require('../dist/db/prisma');
-    const appModule = require('../dist/app');
-    const configModule = require('../dist/config/postgres');
+test('compiled server boots and closes when MongoDB modules cannot load', () => {
+    const script = `
+        const assert=require('node:assert/strict'), Module=require('node:module'), net=require('node:net');
+        const load=Module._load;
+        Module._load=function(name,...args){if(/^(mongoose|mongodb)(\\/|$)/.test(name))throw Error('MongoDB runtime import');return load.call(this,name,...args);};
+        const db=require('./dist/db/prisma'); let connected=0,closed=0;
+        db.createPrismaRuntime=()=>({client:{},connect:async()=>{connected++},ready:async()=>true,close:async()=>{closed++}});
+        (async()=>{const probe=net.createServer();await new Promise(r=>probe.listen(0,'127.0.0.1',r));process.env.PORT=String(probe.address().port);await new Promise(r=>probe.close(r));
+        const server=await require('./dist/server').startServer();
+        const response=await fetch('http://127.0.0.1:'+server.address().port+'/health');assert.equal(response.status,200);assert.equal(connected,1);
+        const shutdown=process.listeners('SIGTERM').at(-1);shutdown();shutdown();
+        for(let i=0;i<100&&closed===0;i++)await new Promise(r=>setTimeout(r,10));assert.equal(closed,1);console.log('mongo-free lifecycle passed');})().catch(()=>{process.exitCode=1});
+    `;
+    const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 15000, env: { ...process.env, NODE_ENV: 'test', CATALOG_POSTGRES_TARGET: 'local', CATALOG_INGREDIENT_STORE: 'postgres', CATALOG_PRODUCT_STORE: 'postgres', CATALOG_RECIPE_STORE: 'postgres' } });
+    assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /mongo-free lifecycle passed/);
+});
+test('startup releases Prisma after connect, app and listener failures without leaking driver details', async t => {
+    const db = require('../dist/db/prisma'), apps = require('../dist/app'), net = require('node:net');
     const { startServer } = require('../dist/server');
+    t.mock.method(require('../dist/config/postgres'), 'loadPostgresEnvironment', () => {});
     const before = { ...process.env };
-    const events = [];
-    const postgres = modes.includes('postgres');
-    const mongo = modes.includes('mongodb');
-    let mongoReady = true, pgReady = true, probeThrows = false, app, originalClose;
-    const oldInt = process.listeners('SIGINT'), oldTerm = process.listeners('SIGTERM');
-    const oldExitCode = process.exitCode;
-    const errors = [];
-    t.mock.method(console, 'log', () => {});
-    t.mock.method(console, 'error', message => errors.push(message));
-    t.mock.method(configModule, 'loadPostgresEnvironment', () => {});
-    const readyDescriptor = Object.getOwnPropertyDescriptor(mongoose.connection, 'readyState');
-    Object.defineProperty(mongoose.connection, 'readyState', { configurable: true, get: () => {
-        assert.ok(mongo, 'PostgreSQL-only readiness must not inspect MongoDB');
-        return mongoReady ? 1 : 0;
-    } });
-    t.mock.method(mongoose, 'connect', async () => {
-        assert.ok(mongo, 'PostgreSQL-only must not connect MongoDB');
-        events.push('mongo connect');
-        if (failure === 'mongo connect' || failure === 'mongo connect and close') throw Error('private driver URL');
-        return mongoose;
-    });
-    t.mock.method(mongoose, 'disconnect', () => {
-        assert.ok(mongo, 'PostgreSQL-only must not disconnect MongoDB');
-        events.push('mongo close');
-        if (failure === 'mongo close' || failure === 'both close' || failure === 'mongo connect and close') throw Error('private driver URL');
-        return Promise.resolve();
-    });
-    const factory = t.mock.method(runtimeModule, 'createPrismaRuntime', () => {
-        events.push('postgres allocate');
-        return { client: {}, connect: async () => {
-            events.push('postgres connect');
-            if (failure === 'postgres connect') throw Error('private driver URL');
-        }, close: async () => {
-            events.push('postgres close');
-            if (failure === 'postgres close' || failure === 'both close' || failure === 'mongo connect and close') throw Error('private driver URL');
-        }, ready: async () => { if (probeThrows) throw Error('private driver URL'); return pgReady; } };
-    });
-    const create = appModule.createApp;
-    t.mock.method(appModule, 'createApp', (...args) => {
-        if (failure === 'application') throw Error('private application details');
-        app = create(...args);
-        originalClose = app.io.close.bind(app.io);
-        if (failure === 'socket close' || failure === 'async socket close') {
-            app.io.close = () => {
-                events.push('socket close');
-                if (failure === 'socket close') throw Error('private socket details');
-                return Promise.reject(Error('private socket details'));
+    t.after(() => { for (const key of Object.keys(process.env)) if (!(key in before)) delete process.env[key]; Object.assign(process.env, before); });
+    Object.assign(process.env, { NODE_ENV: 'test', CATALOG_POSTGRES_TARGET: 'local' });
+    for (const failure of ['connect', 'app', 'listener']) {
+        const blocker = net.createServer(); await new Promise(r => blocker.listen(0, '127.0.0.1', r));
+        process.env.PORT = String(blocker.address().port);
+        if (failure !== 'listener') await new Promise(r => blocker.close(r));
+        let closed = 0;
+        const factory = t.mock.method(db, 'createPrismaRuntime', () => ({ client: {}, connect: async () => { if (failure === 'connect') throw Error('private URL'); }, ready: async () => true, close: async () => { closed++; } }));
+        const original = apps.createApp;
+        const appMock = t.mock.method(apps, 'createApp', (...args) => { if (failure === 'app') throw Error('private URL'); return original(...args); });
+        try { await assert.rejects(startServer(), e => e.message === 'Backend database connection or startup failed' && !e.cause); assert.equal(closed, 1); }
+        finally { if (blocker.listening) await new Promise(r => blocker.close(r)); factory.mock.restore(); appMock.mock.restore(); }
+    }
+});
+
+test('environment loading is deterministic, quiet and disabled for isolated tests', t => {
+    const env = process.env.NODE_ENV;
+    t.after(() => { if (env === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = env; });
+    const calls = [];
+    t.mock.method(require('dotenv'), 'config', options => { calls.push(options); return {}; });
+    const { loadPostgresEnvironment } = require('../dist/config/postgres');
+    process.env.NODE_ENV = 'test'; loadPostgresEnvironment(); assert.equal(calls.length, 0);
+    process.env.NODE_ENV = 'development'; loadPostgresEnvironment();
+    assert.deepEqual(calls.map(value => require('node:path').basename(value.path)), ['.env.local', '.env', '.env.postgres']);
+    for (const options of calls) { assert.equal(options.quiet, true); assert.equal(options.override, false); }
+});
+
+test('shutdown attempts Prisma cleanup after socket failures and sanitizes every failure', async t => {
+    for (const failure of ['postgres close', 'socket close', 'async socket close']) await t.test(failure, async t => {
+        const db = require('../dist/db/prisma'), apps = require('../dist/app'), net = require('node:net');
+        const beforePort = process.env.PORT, beforeExit = process.exitCode;
+        t.after(() => { if (beforePort === undefined) delete process.env.PORT; else process.env.PORT = beforePort; process.exitCode = beforeExit; });
+        const probe = net.createServer(); await new Promise(r => probe.listen(0, '127.0.0.1', r));
+        process.env.PORT = String(probe.address().port); await new Promise(r => probe.close(r));
+        t.mock.method(require('../dist/config/postgres'), 'loadPostgresEnvironment', () => {});
+        let closed = 0, application, actualClose;
+        const errors = [];
+        t.mock.method(console, 'log', () => {}); t.mock.method(console, 'error', message => errors.push(message));
+        t.mock.method(db, 'createPrismaRuntime', () => ({ client: {}, connect: async () => {}, ready: async () => true, close: async () => {
+            closed++; if (failure === 'postgres close') throw Error('private details');
+        } }));
+        const create = apps.createApp;
+        t.mock.method(apps, 'createApp', (...args) => {
+            application = create(...args); actualClose = application.io.close.bind(application.io);
+            if (failure !== 'postgres close') application.io.close = () => {
+                if (failure === 'socket close') throw Error('private details');
+                return Promise.reject(Error('private details'));
             };
-        }
-        return app;
-    });
-    const blocker = net.createServer();
-    await new Promise(resolve => postgres ? blocker.listen(0, '127.0.0.1', resolve) : blocker.listen(0, resolve));
-    const port = blocker.address().port;
-    if (failure !== 'listener') await new Promise(resolve => blocker.close(resolve));
-    Object.assign(process.env, { PORT: String(port), NODE_ENV: 'test',
-        CATALOG_INGREDIENT_STORE: modes[0], CATALOG_PRODUCT_STORE: modes[1], CATALOG_RECIPE_STORE: modes[2],
-        TEST_DATABASE_URL: fixture, MONGO_URI: 'not-a-valid-mongo-uri' });
-    const handlers = () => ['SIGINT', 'SIGTERM'].flatMap(signal => process.listeners(signal)
-        .filter(fn => !(signal === 'SIGINT' ? oldInt : oldTerm).includes(fn)));
-    const settle = async () => {
-        for (let i = 0; i < 200 && handlers().length; i++) await new Promise(resolve => setTimeout(resolve, 5));
-        assert.equal(handlers().length, 0, 'shutdown removes both signal handlers');
-    };
-    try {
-        await run({ startServer, events, factory, postgres, mongo, errors, port, settle,
-            setHealth: (m, p, throws = false) => { mongoReady = m; pgReady = p; probeThrows = throws; } });
-    } finally {
-        const shutdown = handlers()[0];
-        if (shutdown) { shutdown(); await settle(); }
-        if (app?.server.listening && originalClose) await new Promise(resolve => originalClose(() => resolve()));
-        if (blocker.listening) await new Promise(resolve => blocker.close(resolve));
-        for (const signal of ['SIGINT', 'SIGTERM']) {
-            for (const fn of process.listeners(signal)) if (!(signal === 'SIGINT' ? oldInt : oldTerm).includes(fn)) process.removeListener(signal, fn);
-        }
-        process.exitCode = oldExitCode;
-        for (const key of Object.keys(process.env)) if (!(key in before)) delete process.env[key];
-        Object.assign(process.env, before);
-        if (readyDescriptor) Object.defineProperty(mongoose.connection, 'readyState', readyDescriptor);
-        else delete mongoose.connection.readyState;
-    }
-}
-
-test('server lifecycle and health follow all five validated dependency selections', async t => {
-    for (const modes of selections) await t.test(modes.join('/'), async t => {
-        await lifecycle(t, modes, async ({ startServer, events, factory, postgres, mongo, setHealth, settle }) => {
-            const server = await startServer();
-            assert.equal(server.listening, true);
-            assert.equal(factory.mock.callCount(), postgres ? 1 : 0);
-            assert.deepEqual(events, [...(postgres ? ['postgres allocate', 'postgres connect'] : []), ...(mongo ? ['mongo connect'] : [])]);
-            if (postgres) assert.equal(server.address().address, '127.0.0.1');
-            else assert.notEqual(server.address().address, '127.0.0.1', 'legacy retains default binding');
-            const url = `http://127.0.0.1:${server.address().port}/health`;
-            for (const m of [true, false]) for (const p of [true, false]) {
-                setHealth(m, p);
-                const response = await fetch(url);
-                const healthy = (!mongo || m) && (!postgres || p);
-                assert.equal(response.status, healthy ? 200 : 503);
-                assert.deepEqual(await response.json(), { status: healthy ? 'ok' : 'unavailable' });
-            }
-            if (postgres) {
-                setHealth(true, true, true);
-                const response = await fetch(url);
-                assert.equal(response.status, 503);
-                assert.deepEqual(await response.json(), { status: 'unavailable' });
-            }
-            const shutdown = process.listeners('SIGTERM').at(-1);
-            shutdown(); shutdown(); process.listeners('SIGINT').at(-1)();
-            await settle();
-            assert.equal(server.listening, false);
-            assert.equal(events.filter(e => e === 'mongo close').length, mongo ? 1 : 0);
-            assert.equal(events.filter(e => e === 'postgres close').length, postgres ? 1 : 0);
+            return application;
         });
+        const before = process.listeners('SIGTERM');
+        try {
+            await require('../dist/server').startServer();
+            const shutdown = process.listeners('SIGTERM').at(-1);
+            shutdown(); shutdown();
+            for (let i = 0; i < 100 && process.listeners('SIGTERM').includes(shutdown); i++) await new Promise(r => setTimeout(r, 10));
+            assert.equal(closed, 1); assert.deepEqual(errors, ['Shutdown failed']); assert.equal(process.exitCode, 1);
+            assert.deepEqual(process.listeners('SIGTERM'), before);
+        } finally { if (application?.server.listening) await new Promise(r => actualClose(r)); }
     });
-});
-
-test('startup failures release allocated resources and never leak driver details', async t => {
-    for (const [failure, modes, expected] of [
-        ['application', selections[4], ['postgres allocate', 'postgres close']],
-        ['postgres connect', selections[3], ['postgres allocate', 'postgres connect', 'postgres close']],
-        ['mongo connect', selections[3], ['postgres allocate', 'postgres connect', 'mongo connect', 'mongo close', 'postgres close']],
-        ['mongo connect and close', selections[3], ['postgres allocate', 'postgres connect', 'mongo connect', 'mongo close', 'postgres close']],
-        ['listener', selections[3], ['postgres allocate', 'postgres connect', 'mongo connect', 'mongo close', 'postgres close']],
-        ['listener', selections[4], ['postgres allocate', 'postgres connect', 'postgres close']],
-        ['listener', selections[0], ['mongo connect', 'mongo close']],
-    ]) await t.test(failure + ':' + modes.join('/'), async t => {
-        await lifecycle(t, modes, async ({ startServer, events, errors }) => {
-            await assert.rejects(startServer(), error => error.message === 'Backend database connection or startup failed' && !error.cause);
-            assert.deepEqual(events, expected);
-            assert.deepEqual(errors, []);
-        }, failure);
-    });
-});
-
-test('shutdown attempts every cleanup despite failures and handles either signal repeatedly', async t => {
-    for (const failure of ['mongo close', 'postgres close', 'both close', 'socket close', 'async socket close']) await t.test(failure, async t => {
-        await lifecycle(t, selections[3], async ({ startServer, events, errors, settle }) => {
-            await startServer();
-            const shutdown = process.listeners('SIGINT').at(-1);
-            shutdown(); shutdown(); process.listeners('SIGTERM').at(-1)();
-            await settle();
-            assert.equal(events.filter(e => e === 'mongo close').length, 1);
-            assert.equal(events.filter(e => e === 'postgres close').length, 1);
-            assert.deepEqual(errors, ['Shutdown failed']);
-            assert.equal(process.exitCode, 1);
-        }, failure);
-    });
-});
-
-test('invalid Recipe selections fail before application or database allocation', async t => {
-    for (const modes of [['mongodb', 'mongodb', 'postgres'], ['postgres', 'mongodb', 'postgres'], ['mongodb', 'postgres', 'postgres']]) {
-        await t.test(modes.join('/'), async t => lifecycle(t, modes, async ({ startServer, events, factory }) => {
-            await assert.rejects(startServer(), /require explicit PostgreSQL Ingredient and Product stores/);
-            assert.equal(factory.mock.callCount(), 0);
-            assert.deepEqual(events, []);
-        }));
-    }
 });

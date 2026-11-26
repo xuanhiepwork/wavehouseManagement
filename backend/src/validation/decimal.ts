@@ -1,4 +1,4 @@
-import { RequestError } from './ingredient.validation';
+import { RequestError } from './request-error';
 
 // Parse decimal notation without a floating-point multiplication or rounding.
 export function decimalInput(value: unknown, scale: number): string {

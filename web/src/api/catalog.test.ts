@@ -40,10 +40,10 @@ describe('configuration', () => {
   it.each([undefined, '', 'https://production.example/api', '/api', 'postgresql://localhost/db',
     'http://localhost.evil/api', 'http://user:password@localhost/api', 'http://localhost/api?secret=x',
     'http://localhost/api#secret', 'http://localhost/elsewhere'])('rejects unsafe or missing base URL %s', baseUrl => {
-    vi.stubEnv('VITE_API_BASE_URL', '')
-    expect(() => createCatalogClient({ baseUrl })).toThrowError(CatalogApiError)
-    expect(() => createCatalogClient({ baseUrl })).toThrow('VITE_API_BASE_URL')
-  })
+      vi.stubEnv('VITE_API_BASE_URL', '')
+      expect(() => createCatalogClient({ baseUrl })).toThrowError(CatalogApiError)
+      expect(() => createCatalogClient({ baseUrl })).toThrow('VITE_API_BASE_URL')
+    })
   it.each(['http://localhost:5000', 'http://127.0.0.1:5000/', 'http://127.0.0.1:5000/api/', 'http://[::1]:5000/api'])('normalizes local base %s', async baseUrl => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(json({ data: ingredient }))
     await createCatalogClient({ baseUrl, fetch }).ingredients.detail(id)
@@ -91,7 +91,11 @@ describe('HTTP contracts', () => {
     expect(url).toBe(`http://127.0.0.1:5000/api${path}`)
     expect(init).toMatchObject({ method, credentials: 'omit', redirect: 'error' })
     expect(init?.body).toBe(payload === undefined ? undefined : JSON.stringify(payload))
-    expect(init?.headers).toEqual({ Accept: 'application/json', ...(payload ? { 'Content-Type': 'application/json' } : {}) })
+    const headers = new Headers(init?.headers);
+    expect(headers.get('accept')).toBe('application/json');
+    expect(headers.get('content-type')).toBe(
+      payload === undefined ? null : 'application/json'
+    );
     expect(init?.signal).toBeInstanceOf(AbortSignal)
   })
 
@@ -295,11 +299,17 @@ describe('historical Recipe read compatibility', () => {
     const { client, fetch } = setup(response)
     expect(await client.recipes.deactivate(id)).toEqual(response)
     expect(fetch).toHaveBeenCalledTimes(1)
+
     const [url, init] = fetch.mock.calls[0]
+
     expect(url).toBe(`http://127.0.0.1:5000/api/recipes/${id}/deactivate`)
-    expect(init).toMatchObject({ method: 'POST', headers: { Accept: 'application/json' } })
+    expect(init).toMatchObject({ method: 'POST' })
+
+    const headers = new Headers(init?.headers)
+
+    expect(headers.get('accept')).toBe('application/json')
     expect(init?.body).toBeUndefined()
-    expect(init?.headers).not.toHaveProperty('Content-Type')
+    expect(headers.has('content-type')).toBe(false)
   })
 
   it.each([
@@ -368,10 +378,10 @@ describe('safe errors and single-attempt requests', () => {
   it.each(['headers', 'body'] as const)('times out while waiting for %s, aborts, and never retries', async stage => {
     vi.useFakeTimers()
     const fetch = vi.fn<typeof globalThis.fetch>()
-    if (stage === 'headers') fetch.mockImplementation(() => new Promise(() => {}))
+    if (stage === 'headers') fetch.mockImplementation(() => new Promise(() => { }))
     else {
       const response = json({ data: recipe })
-      vi.spyOn(response, 'json').mockImplementation(() => new Promise(() => {}))
+      vi.spyOn(response, 'json').mockImplementation(() => new Promise(() => { }))
       fetch.mockResolvedValue(response)
     }
     const client = createCatalogClient({ baseUrl: 'http://localhost', timeoutMs: 50, fetch })

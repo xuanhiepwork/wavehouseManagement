@@ -1,6 +1,6 @@
 import { Prisma } from '../generated/prisma/client';
 import type { PrismaClient } from '../generated/prisma/client';
-import { RequestError } from '../validation/ingredient.validation';
+import { RequestError } from '../validation/request-error';
 import type { PostgresRecipeInput, validateQuery } from '../validation/recipe.postgres.validation';
 import { serializeRecipe } from '../serialization/recipe';
 

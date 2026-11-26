@@ -1,8 +1,7 @@
 import type { IIngredient } from '../models/Ingredient';
 
-export class RequestError extends Error {
-    constructor(public readonly status: number, message: string) { super(message); }
-}
+import { RequestError } from './request-error';
+export { RequestError } from './request-error';
 
 export type IngredientInput = Partial<Pick<IIngredient,
     'code' | 'name' | 'category' | 'unit' | 'costPrice' | 'minStock' | 'isActive'>>;

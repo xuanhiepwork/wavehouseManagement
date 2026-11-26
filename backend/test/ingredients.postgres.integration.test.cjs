@@ -4,7 +4,7 @@ const { randomUUID } = require('node:crypto');
 const { connectTestDatabase } = require('../scripts/test-postgres.cjs');
 const { createPrismaRuntime } = require('../dist/db/prisma');
 const { createPostgresIngredientService } = require('../dist/services/ingredient.postgres.service');
-const { createApp } = require('../dist/app');
+const { createApp } = require('./helpers/catalog-app.cjs');
 
 test('PostgreSQL Ingredient HTTP API with real Prisma, concurrency and isolated cleanup', {
     skip: !process.env.TEST_DATABASE_URL ? 'TEST_DATABASE_URL is not configured' : false, timeout: 60000,

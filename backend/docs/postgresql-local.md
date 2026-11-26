@@ -1,5 +1,11 @@
 # Local PostgreSQL catalog (through Phase 2.4)
 
+> Historical phase notes. The current runtime defaults to PostgreSQL, removes mixed
+> MongoDB startup, and uses offline generation/validation. Follow the
+> [current runtime audit and configuration guide](postgresql-runtime-audit.md).
+> `test:postgres` no longer deploys migrations; it requires an existing isolated
+> local test schema. No commands in these historical notes authorize Aiven writes.
+
 ## Phase 2.4: PostgreSQL-only Catalog server lifecycle
 
 All three stores must explicitly select PostgreSQL to remove the MongoDB runtime

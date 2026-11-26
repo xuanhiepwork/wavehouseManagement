@@ -1,6 +1,6 @@
 import type { ProductSize } from '../generated/prisma/client';
-import { RequestError } from './ingredient.validation';
-import { validateQuery as legacyQuery } from './product.validation';
+import { RequestError } from './request-error';
+import { catalogQuery } from './catalog-query';
 import { decimalInput } from './decimal';
 export { validateId } from './ingredient.postgres.validation';
 
@@ -48,7 +48,7 @@ export function validateBody(body: unknown, patch = false): PostgresProductInput
     return output;
 }
 export function validateQuery(query: Record<string, unknown>) {
-    const { page, limit } = legacyQuery(query);
+    const { page, limit } = catalogQuery(query);
     if ((page - 1) * limit > 2147483647) return invalid();
     for (const key of ['category', 'search']) {
         if (typeof query[key] === 'string' && query[key].includes('\0')) return invalid();

@@ -6,7 +6,7 @@ const validation = require('../dist/validation/ingredient.postgres.validation');
 const { decimalInput } = require('../dist/validation/decimal');
 const { serializeIngredient } = require('../dist/serialization/ingredient');
 const { createPostgresIngredientService } = require('../dist/services/ingredient.postgres.service');
-const { createApp } = require('../dist/app');
+const { createApp } = require('./helpers/catalog-app.cjs');
 process.env.NODE_ENV = 'test';
 process.env.CATALOG_INGREDIENT_STORE = 'postgres';
 const input = () => ({ code: ' beans ', name: ' Coffee ', category: ' Test ', unit: 'g', costPrice: '0.1000' });

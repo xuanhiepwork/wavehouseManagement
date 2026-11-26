@@ -1,0 +1,60 @@
+file	classification	runtime	notes
+.gitignore	historical documentation/config metadata	no	Current PostgreSQL runtime guide supersedes historic startup descriptions
+backend/Dockerfile	documentation/ignore/build metadata	no MongoDB connection	Historical references retained; current runtime guide takes precedence
+backend/docs/postgresql-local.md	historical documentation/config metadata	no	Current PostgreSQL runtime guide supersedes historic startup descriptions
+backend/docs/postgresql-runtime-audit.md	historical documentation/config metadata	no	Current PostgreSQL runtime guide supersedes historic startup descriptions
+backend/package-lock.json	development dependency	no	Mongoose and driver marked dev; retained for legacy tests/data audit
+backend/package.json	development dependency	no	Mongoose and driver marked dev; retained for legacy tests/data audit
+backend/README.md	historical documentation/config metadata	no	Current PostgreSQL runtime guide supersedes historic startup descriptions
+backend/scripts/audit-postgres-readonly.cjs	safe database audit/test runner	not app runtime	No MongoDB persistence; see current runtime guide
+backend/scripts/bootstrap-admin.cjs	explicit PostgreSQL write script	not called	Not executed; not part of startup/audit
+backend/scripts/smoke-postgres-readonly.cjs	read-only audit/test utility	no	No automatic migration; Mongo import blocker or isolated test fixture
+backend/scripts/test-postgres.cjs	safe database audit/test runner	not app runtime	No MongoDB persistence; see current runtime guide
+backend/scripts/test-unit.cjs	read-only audit/test utility	no	No automatic migration; Mongo import blocker or isolated test fixture
+backend/src/app.ts	used PostgreSQL replacement/runtime	yes	No Mongoose or MongoDB driver required by production import graph
+backend/src/config/ingredient.openapi.ts	used PG documentation with legacy templates	yes	PG functions produce UUID/string decimals; old templates test-only
+backend/src/config/postgres.ts	legacy source retained	no	Replaced by PostgreSQL runtime; see module table in Markdown report
+backend/src/config/product.openapi.ts	used PG documentation with legacy templates	yes	PG functions produce UUID/string decimals; old templates test-only
+backend/src/config/recipe.openapi.ts	used PG documentation with legacy templates	yes	PG functions produce UUID/string decimals; old templates test-only
+backend/src/controllers/catalog.postgres.controller.ts	used PostgreSQL runtime	yes	No MongoDB persistence; see current runtime guide
+backend/src/controllers/ingredient.controller.ts	PostgreSQL replacement exists; legacy retained	no	Legacy behavior/data reconciliation and regression fixtures; production entrypoints do not import this module
+backend/src/controllers/product.controller.ts	PostgreSQL replacement exists; legacy retained	no	Legacy behavior/data reconciliation and regression fixtures; production entrypoints do not import this module
+backend/src/controllers/recipe.controller.ts	PostgreSQL replacement exists; legacy retained	no	Legacy behavior/data reconciliation and regression fixtures; production entrypoints do not import this module
+backend/src/db/prisma.ts	used PostgreSQL replacement/runtime	yes	No Mongoose or MongoDB driver required by production import graph
+backend/src/models/Ingredient.ts	PostgreSQL replacement exists; legacy retained	no	Legacy behavior/data reconciliation and regression fixtures; production entrypoints do not import this module
+backend/src/models/Product.ts	PostgreSQL replacement exists; legacy retained	no	Legacy behavior/data reconciliation and regression fixtures; production entrypoints do not import this module
+backend/src/models/Recipe.ts	PostgreSQL replacement exists; legacy retained	no	Legacy behavior/data reconciliation and regression fixtures; production entrypoints do not import this module
+backend/src/routes/catalog.postgres.routes.ts	used PostgreSQL runtime	yes	No MongoDB persistence; see current runtime guide
+backend/src/routes/ingredient.routes.ts	PostgreSQL replacement exists; legacy retained	no	Legacy behavior/data reconciliation and regression fixtures; production entrypoints do not import this module
+backend/src/routes/product.routes.ts	PostgreSQL replacement exists; legacy retained	no	Legacy behavior/data reconciliation and regression fixtures; production entrypoints do not import this module
+backend/src/routes/recipe.routes.ts	PostgreSQL replacement exists; legacy retained	no	Legacy behavior/data reconciliation and regression fixtures; production entrypoints do not import this module
+backend/src/serialization/ingredient.ts	used PostgreSQL replacement/runtime	yes	No Mongoose or MongoDB driver required by production import graph
+backend/src/serialization/product.ts	used PostgreSQL replacement/runtime	yes	No Mongoose or MongoDB driver required by production import graph
+backend/src/serialization/recipe.ts	used PostgreSQL replacement/runtime	yes	No Mongoose or MongoDB driver required by production import graph
+backend/src/server.ts	used PostgreSQL replacement/runtime	yes	No Mongoose or MongoDB driver required by production import graph
+backend/src/services/ingredient.postgres.service.ts	used PostgreSQL replacement/runtime	yes	No Mongoose or MongoDB driver required by production import graph
+backend/src/services/ingredient.service.ts	PostgreSQL replacement exists; legacy retained	no	Legacy behavior/data reconciliation and regression fixtures; production entrypoints do not import this module
+backend/src/services/product.postgres.service.ts	used PostgreSQL replacement/runtime	yes	No Mongoose or MongoDB driver required by production import graph
+backend/src/services/product.service.ts	PostgreSQL replacement exists; legacy retained	no	Legacy behavior/data reconciliation and regression fixtures; production entrypoints do not import this module
+backend/src/services/recipe.postgres.service.ts	used PostgreSQL replacement/runtime	yes	No Mongoose or MongoDB driver required by production import graph
+backend/src/services/recipe.service.ts	PostgreSQL replacement exists; legacy retained	no	Legacy behavior/data reconciliation and regression fixtures; production entrypoints do not import this module
+backend/src/validation/catalog-query.ts	used PostgreSQL runtime	yes	No MongoDB persistence; see current runtime guide
+backend/src/validation/ingredient.validation.ts	PostgreSQL replacement exists; legacy retained	no	Legacy behavior/data reconciliation and regression fixtures; production entrypoints do not import this module
+backend/src/validation/product.validation.ts	PostgreSQL replacement exists; legacy retained	no	Legacy behavior/data reconciliation and regression fixtures; production entrypoints do not import this module
+backend/src/validation/recipe.validation.ts	PostgreSQL replacement exists; legacy retained	no	Legacy behavior/data reconciliation and regression fixtures; production entrypoints do not import this module
+backend/src/validation/request-error.ts	used PostgreSQL runtime	yes	No MongoDB persistence; see current runtime guide
+backend/test/helpers/catalog-app.cjs	legacy/PG regression fixture	no	Default npm test excludes integration writes; explicit test fixtures only
+backend/test/ingredients.integration.test.cjs	legacy/PG regression fixture	no	Default npm test excludes integration writes; explicit test fixtures only
+backend/test/ingredients.postgres.test.cjs	legacy/PG regression fixture	no	Default npm test excludes integration writes; explicit test fixtures only
+backend/test/ingredients.test.cjs	legacy/PG regression fixture	no	Default npm test excludes integration writes; explicit test fixtures only
+backend/test/models.test.cjs	legacy/PG regression fixture	no	Default npm test excludes integration writes; explicit test fixtures only
+backend/test/prisma-runtime.test.cjs	legacy/PG regression fixture	no	Default npm test excludes integration writes; explicit test fixtures only
+backend/test/products.integration.test.cjs	legacy/PG regression fixture	no	Default npm test excludes integration writes; explicit test fixtures only
+backend/test/products.postgres.integration.test.cjs	legacy/PG regression fixture	no	Default npm test excludes integration writes; explicit test fixtures only
+backend/test/products.test.cjs	legacy/PG regression fixture	no	Default npm test excludes integration writes; explicit test fixtures only
+backend/test/recipes.integration.test.cjs	legacy/PG regression fixture	no	Default npm test excludes integration writes; explicit test fixtures only
+backend/test/recipes.test.cjs	legacy/PG regression fixture	no	Default npm test excludes integration writes; explicit test fixtures only
+docker-compose.yml	legacy optional infrastructure	MongoDB optional	legacy-mongo profile; no backend dependency
+mobile-app/__tests__/catalog-navigation.test.ts	client contract regression	no MongoDB client	UUID/decimal protocol; deliberately rejects legacy metadata/ObjectId
+README.md	historical documentation/config metadata	no	Current PostgreSQL runtime guide supersedes historic startup descriptions
+REVIEW.md	historical documentation/config metadata	no	Current PostgreSQL runtime guide supersedes historic startup descriptions

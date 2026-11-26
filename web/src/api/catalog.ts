@@ -1,4 +1,5 @@
 import { CatalogApiError, httpError } from './catalog.errors'
+import { authenticatedFetch } from '../workspace/api'
 import type {
   Ingredient, IngredientInput, IngredientQuery, Product, ProductInput, ProductQuery,
   Recipe, RecipeInput, RecipeQuery, DataEnvelope, PageEnvelope, UUID,
@@ -103,11 +104,15 @@ export interface CatalogClientOptions {
   baseUrl?: string
   timeoutMs?: number
   fetch?: typeof globalThis.fetch
+  /** Use the existing workspace proxy and opaque Bearer session. No new token storage. */
+  sameOrigin?: boolean
+  token?: string
+  getToken?: () => string | undefined
 }
 
 /** Construction is lazy/explicit so importing the client never changes the starter UI. */
 export function createCatalogClient(options: CatalogClientOptions = {}) {
-  const base = baseUrl(options.baseUrl ?? import.meta.env.VITE_API_BASE_URL)
+  const base = options.sameOrigin ? '/api' : baseUrl(options.baseUrl ?? import.meta.env.VITE_API_BASE_URL)
   const timeoutMs = options.timeoutMs ?? 10_000
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) {
     throw new CatalogApiError('CONFIGURATION')
@@ -128,11 +133,11 @@ export function createCatalogClient(options: CatalogClientOptions = {}) {
     const work = async () => {
       let response: Response
       try {
-        response = await fetcher(`${base}${path}`, {
+        response = await authenticatedFetch(options.getToken?.() ?? options.token, `${base}${path}`, {
           method, headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
           signal: controller.signal, credentials: 'omit', redirect: 'error',
-        })
+        }, fetcher)
       } catch {
         throw new CatalogApiError('NETWORK')
       }

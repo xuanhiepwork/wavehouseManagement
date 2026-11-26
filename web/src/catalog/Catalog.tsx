@@ -13,10 +13,12 @@ import type { RecipeCreationClient, RecipeCreationModel } from './useRecipeCreat
 import { useRecipeLifecycle, useRecipeMutationLock } from './useRecipeLifecycle'
 import type { RecipeLifecycleClient, RecipeLifecycleModel } from './useRecipeLifecycle'
 import './Catalog.css'
+import { emptyCreationDraft } from './creation.validation'
+import { emptyRecipeDraft } from './recipe.validation'
 
 // List/detail views receive reads only. Creation models expose no Recipe lifecycle actions.
 type ReadClient = { [K in keyof CatalogClient]: Pick<CatalogClient[K], 'list' | 'detail'> }
-type WorkspaceClient = ReadClient & CreationClient & RecipeCreationClient & RecipeLifecycleClient
+type WorkspaceClient = ReadClient & CreationClient & RecipeCreationClient & RecipeLifecycleClient & { ingredients: { softDelete?: CatalogClient['ingredients']['softDelete'] } }
 type Section = keyof ReadClient
 type RecordItem = Ingredient | Product | Recipe
 const sections: Section[] = ['ingredients', 'products', 'recipes']
@@ -138,6 +140,8 @@ function Workspace({ section, client, creation, recipeCreation, lifecycle }: { s
   const [limit, setLimit] = useState(20)
   const [selected, setSelected] = useState<string>()
   const [notice, setNotice] = useState('')
+  const [deletingIngredientId, setDeletingIngredientId] = useState<string | null>(null)
+  const deletingIngredientLock = useRef(false)
   const [detailRevision, setDetailRevision] = useState(0)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyContext, setHistoryContext] = useState<RecipeHistoryContext>()
@@ -172,6 +176,27 @@ function Workspace({ section, client, creation, recipeCreation, lifecycle }: { s
   const state = useCatalogRead(load)
   const data = state.data
   const directoryPage = data?.pagination.page ?? page
+  async function stopUsingIngredient(item: Ingredient) {
+    if (!item.isActive || !client.ingredients.softDelete || deletingIngredientLock.current) return
+    if (!window.confirm(`Ngừng sử dụng nguyên liệu ${item.code} — ${item.name}?\nLịch sử phiếu và công thức vẫn được lưu lại.`)) return
+    deletingIngredientLock.current = true
+    setDeletingIngredientId(item._id)
+    setNotice('')
+    try {
+      const result = await client.ingredients.softDelete(item._id)
+      if (result.data.isActive) throw new Error('Máy chủ chưa xác nhận nguyên liệu đã ngừng sử dụng.')
+      setNotice(`Đã ngừng sử dụng nguyên liệu ${item.code}. Dữ liệu lịch sử vẫn được giữ.`)
+      if (selected === item._id) setDetailRevision(value => value + 1)
+      state.retry()
+    } catch {
+      // A lost response does not prove failure; do not automatically resend DELETE.
+      setNotice(`Chưa xác nhận được kết quả với ${item.code}. Hãy tải lại danh sách/chi tiết trước khi thao tác thêm.`)
+      state.retry()
+    } finally {
+      deletingIngredientLock.current = false
+      setDeletingIngredientId(null)
+    }
+  }
   function select(id: string, button: HTMLButtonElement) { selectionButton.current = button; setSelected(id) }
   function changePage(next: number) { setPage(next); setSelected(undefined); state.retry() }
   function apply(next: Filters) { setFilters({ ...next }); setPage(1); setSelected(undefined) }
@@ -249,6 +274,12 @@ function Workspace({ section, client, creation, recipeCreation, lifecycle }: { s
               {'name' in item ? <><th scope="row"><span className="record-name">{item.name}</span><span className="record-code">{item.code}</span></th><td>{item.category}</td>{'costPrice' in item ? <><td>{item.unit}</td><td className="decimal">{item.costPrice}</td><td className="decimal">{item.minStock}</td><td><Status active={item.isActive} /></td></> : <><td><Prices product={item} /></td><td><Status active={item.isAvailable} available /></td></>}</>
                 : <><th scope="row"><Reference kind="product" id={item.productId} reader={data.reader} /></th><td>{item.size}</td><td>v{item.version}</td><td><RecipeIngredients recipe={item} reader={data.reader} /></td><td><Status active={item.isActive} /></td></>}
               <td><button className="text-button" type="button" aria-label={'name' in item ? `View ${item.name}` : `View recipe ${item.size} version ${item.version} for ${item.productId}`} aria-pressed={selected === item._id} onClick={e => select(item._id, e.currentTarget)}>View <span aria-hidden="true">↗</span></button>
+                {'costPrice' in item && item.isActive && client.ingredients.softDelete && <button className="text-button catalog-stop-ingredient" type="button"
+                    disabled={deletingIngredientId !== null || lifecycle?.locked}
+                    aria-label={`Ngừng sử dụng nguyên liệu ${item.name}`}
+                    onClick={() => { void stopUsingIngredient(item) }}>
+                    {deletingIngredientId === item._id ? 'Đang cập nhật…' : 'Ngừng sử dụng'}
+                </button>}
                 {'ingredients' in item && <button className="text-button recipe-history-link" type="button" disabled={lifecycle?.locked} aria-label={`History for recipe ${item.size} version ${item.version} for ${item.productId}`} onClick={event => openHistory(event.currentTarget, item)}>History</button>}</td>
             </tr>)}</tbody></table>
           </div>)}
@@ -261,7 +292,7 @@ function Workspace({ section, client, creation, recipeCreation, lifecycle }: { s
     </div>
   </>
 }
-export default function Catalog({ client }: { client: WorkspaceClient }) {
+export default function Catalog({ client, onDirtyChange, onWorkingChange }: { client: WorkspaceClient; onDirtyChange?: (value: boolean) => void; onWorkingChange?: (value: boolean) => void }) {
   const [section, setSection] = useState<Section>('ingredients')
   const ingredientCreation = useCatalogCreation('ingredients', client)
   const productCreation = useCatalogCreation('products', client)
@@ -269,6 +300,14 @@ export default function Catalog({ client }: { client: WorkspaceClient }) {
   const recipeCreation = useRecipeCreation(client, mutationLock)
   const lifecycle = useRecipeLifecycle(client, mutationLock)
   const busy = ingredientCreation.busy || productCreation.busy || recipeCreation.busy || lifecycle.locked
+  const dirty = JSON.stringify(ingredientCreation.draft) !== JSON.stringify(emptyCreationDraft())
+    || JSON.stringify(productCreation.draft) !== JSON.stringify(emptyCreationDraft())
+    || JSON.stringify(recipeCreation.draft) !== JSON.stringify(emptyRecipeDraft())
+    || ingredientCreation.phase === 'uncertain' || productCreation.phase === 'uncertain'
+    || recipeCreation.phase === 'uncertain' || lifecycle.phase === 'uncertain'
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty, onDirtyChange])
+  useEffect(() => { onWorkingChange?.(busy) }, [busy, onWorkingChange])
+  useEffect(() => () => { onDirtyChange?.(false); onWorkingChange?.(false) }, [onDirtyChange, onWorkingChange])
   return <div className="catalog-shell"><a className="skip-link" href="#catalog-main">Skip to catalog</a>
     <aside className="sidebar"><div className="brand"><span className="brand-mark" aria-hidden="true">W</span><div>WaveHouse<span>MANAGEMENT</span></div></div><p className="nav-label">Workspace</p>
       <nav aria-label="Catalog sections">{sections.map((item, index) => <button type="button" key={item} aria-current={section === item ? 'page' : undefined} disabled={busy} onClick={() => setSection(item)}><span className="nav-symbol" aria-hidden="true">{['◫', '◇', '≋'][index]}</span>{titles[item]}</button>)}</nav>

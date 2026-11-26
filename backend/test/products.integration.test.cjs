@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const mongoose = require('mongoose');
 const { Product } = require('../dist/models/Product');
-const { createApp } = require('../dist/app');
+const { createLegacyApp: createApp } = require('./helpers/catalog-app.cjs');
 
 // Only an explicitly supplied dedicated test URI is used. Do not load dotenv,
 // read MONGO_URI, or fall back to a development/production database.

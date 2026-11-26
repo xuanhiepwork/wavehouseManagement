@@ -5,7 +5,7 @@ const { connectTestDatabase } = require('../scripts/test-postgres.cjs');
 const { createPrismaRuntime } = require('../dist/db/prisma');
 const { createPostgresProductService } = require('../dist/services/product.postgres.service');
 const { createPostgresIngredientService } = require('../dist/services/ingredient.postgres.service');
-const { createApp } = require('../dist/app');
+const { createApp } = require('./helpers/catalog-app.cjs');
 
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 async function atGate(gate) {
@@ -84,7 +84,7 @@ test('PostgreSQL Product HTTP API: real transactions, identities, reference race
     }
     try {
         await runtime.connect(); connected = true;
-        Object.assign(process.env, { NODE_ENV: 'test', CATALOG_INGREDIENT_STORE: 'mongodb', CATALOG_PRODUCT_STORE: 'postgres' });
+        Object.assign(process.env, { NODE_ENV: 'test', CATALOG_INGREDIENT_STORE: 'postgres', CATALOG_PRODUCT_STORE: 'postgres' });
         await db.ingredient.create({ data: { id: ingredientId, code: prefix + '_ING', name: 'Recipe fixture', category: prefix, unit: 'g', costPrice: '0' } });
         const service = createPostgresProductService(db);
         await withApi(service, async (request, base) => {
@@ -361,25 +361,11 @@ test('PostgreSQL Product HTTP API: real transactions, identities, reference race
                 assert.equal(stored.isAvailable, true); assert.equal(stored.description, 'Reactivated');
                 assert.deepEqual(stored.prices, [{ size: 'M', price: '7' }]);
             });
-            await t.test('all four local store combinations use the selected HTTP contracts without cross-store writes', async () => {
-                for (const ingredient of ['mongodb', 'postgres']) for (const product of ['mongodb', 'postgres']) {
-                    Object.assign(process.env, { CATALOG_INGREDIENT_STORE: ingredient, CATALOG_PRODUCT_STORE: product });
-                    const app = createApp(() => runtime.ready(), {
-                        ...(ingredient === 'postgres' ? { postgresIngredients: createPostgresIngredientService(db) } : {}),
-                        ...(product === 'postgres' ? { postgresProducts: service } : {}),
-                    });
-                    await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
-                    const url = `http://127.0.0.1:${app.server.address().port}`;
-                    try {
-                        const productResponse = await fetch(url + '/api/products/' + first._id);
-                        const ingredientResponse = await fetch(url + '/api/ingredients/' + ingredientId);
-                        assert.equal(productResponse.status, product === 'postgres' ? 200 : 400);
-                        assert.equal(ingredientResponse.status, ingredient === 'postgres' ? 200 : 400);
-                        const docs = await (await fetch(url + '/api-docs.json')).json();
-                        assert.equal(docs.components.schemas.Product.properties.__v?.type, product === 'postgres' ? undefined : 'integer');
-                        assert.equal(docs.components.schemas.Ingredient.properties.__v?.type, ingredient === 'postgres' ? undefined : 'integer');
-                        assert.equal(docs.components.schemas.Recipe.properties.productId.pattern, '^[a-fA-F0-9]{24}$');
-                    } finally { await new Promise(resolve => app.io.close(resolve)); }
+            await t.test('all catalog documentation uses the PostgreSQL contract', async () => {
+                const docs = await (await fetch(base + '/api-docs.json')).json();
+                for (const model of ['Ingredient', 'Product', 'Recipe']) {
+                    assert.equal(docs.components.schemas[model].properties.__v, undefined);
+                    assert.equal(docs.components.schemas[model].properties._id.format, 'uuid');
                 }
             });
             assert.equal((await fetch(base + '/health')).status, 200);

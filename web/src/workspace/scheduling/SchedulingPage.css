@@ -1,0 +1,24 @@
+.wh-scheduling { display: grid; gap: 18px; width: 100%; }
+.wh-schedule-panel { background: #fff; border: 1px solid #dfe6ec; border-radius: 12px; padding: 20px; min-width: 0; }
+.wh-schedule-panel h3 { margin: 0 0 16px; font-size: 1.05rem; }
+.wh-schedule-panel label { display: grid; gap: 6px; font-size: .9rem; font-weight: 600; margin-bottom: 14px; }
+.wh-schedule-panel select, .wh-schedule-panel input { width: 100%; min-height: 42px; padding: 8px 10px; border: 1px solid #ccd5df; border-radius: 8px; background: white; }
+.wh-schedule-panel button { border: 1px solid #ccd5df; border-radius: 8px; padding: 9px 12px; background: #fff; cursor: pointer; }
+.wh-schedule-panel button:disabled { opacity: .55; cursor: not-allowed; }
+.wh-schedule-panel button.wh-primary { background: #287557; border-color: #287557; color: white; font-weight: 600; }
+.wh-schedule-toolbar { display: flex; flex-wrap: wrap; gap: 18px; align-items: end; justify-content: space-between; }
+.wh-schedule-toolbar label { min-width: min(280px, 100%); margin: 0; }
+.wh-schedule-week { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.wh-schedule-grid { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(260px, 1.4fr); gap: 18px; }
+.wh-schedule-hint { color: #64748b; font-size: .875rem; line-height: 1.6; }
+.wh-schedule-error, .wh-schedule-warning, .wh-schedule-success { border-radius: 8px; padding: 12px 14px; margin: 0; }
+.wh-schedule-error { background: #fef0f0; color: #991b1b; }
+.wh-schedule-warning { background: #fff8e5; color: #854d0e; }
+.wh-schedule-success { background: #edf9ef; color: #166534; }
+.wh-schedule-availability { margin: 0; padding: 0; list-style: none; max-height: 320px; overflow: auto; }
+.wh-schedule-availability li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #e9eef3; font-size: .875rem; }
+.wh-schedule-scroll { width: 100%; overflow-x: auto; }
+.wh-schedule-scroll table { width: 100%; border-collapse: collapse; min-width: 620px; text-align: left; }
+.wh-schedule-scroll th, .wh-schedule-scroll td { padding: 11px 8px; border-bottom: 1px solid #ebeff3; font-size: .9rem; }
+.wh-schedule-scroll th { background: #f6f8fb; }
+@media(max-width: 900px) { .wh-schedule-grid { grid-template-columns: 1fr; } }

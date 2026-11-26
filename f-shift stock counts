@@ -1,0 +1,138 @@
+backend/prisma/migrations/20261118_182143_shift_stock_counts/migration.sql:97: trailing whitespace.
+[32m+[m[32mWHERE "status" IN ('DRAFT', 'SUBMITTED', 'RETURNED');[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:1: trailing whitespace.
+[32m+[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:2: trailing whitespace.
+[32m+[m[32mimport { Router, type RequestHandler, type Response } from 'express';[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:3: trailing whitespace.
+[32m+[m[32mimport { Prisma, type PrismaClient } from '../generated/prisma/client';[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:4: trailing whitespace.
+[32m+[m[32mimport {[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:5: trailing whitespace.
+[32m+[m[32m    applyInventoryMovement,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:6: trailing whitespace.
+[32m+[m[32m    InventoryError,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:7: trailing whitespace.
+[32m+[m[32m} from '../services/inventory.service';[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:8: trailing whitespace.
+[32m+[m[32mimport {[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:9: trailing whitespace.
+[32m+[m[32m    UUID_RE,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:10: trailing whitespace.
+[32m+[m[32m    readBody,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:11: trailing whitespace.
+[32m+[m[32m    readPage,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:12: trailing whitespace.
+[32m+[m[32m    onlyKeys,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:13: trailing whitespace.
+[32m+[m[32m    prismaErrorCode,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:14: trailing whitespace.
+[32m+[m[32m} from '../utils/admin-api';[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:15: trailing whitespace.
+[32m+[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:16: trailing whitespace.
+[32m+[m[32mtype Actor = {[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:17: trailing whitespace.
+[32m+[m[32m    id: string;[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:18: trailing whitespace.
+[32m+[m[32m    role: 'ADMIN' | 'BRANCH_MANAGER' | 'STAFF';[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:19: trailing whitespace.
+[32m+[m[32m    branchId: string | null;[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:20: trailing whitespace.
+[32m+[m[32m};[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:21: trailing whitespace.
+[32m+[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:22: trailing whitespace.
+[32m+[m[32mtype CountLine = {[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:23: trailing whitespace.
+[32m+[m[32m    ingredientId: string;[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:24: trailing whitespace.
+[32m+[m[32m    countedQuantity: string;[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:25: trailing whitespace.
+[32m+[m[32m};[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:26: trailing whitespace.
+[32m+[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:27: trailing whitespace.
+[32m+[m[32mclass CountError extends Error {[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:28: trailing whitespace.
+[32m+[m[32m    constructor([m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:29: trailing whitespace.
+[32m+[m[32m        message: string,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:30: trailing whitespace.
+[32m+[m[32m        public readonly status = 409[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:31: trailing whitespace.
+[32m+[m[32m    ) {[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:32: trailing whitespace.
+[32m+[m[32m        super(message);[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:33: trailing whitespace.
+[32m+[m[32m    }[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:34: trailing whitespace.
+[32m+[m[32m}[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:35: trailing whitespace.
+[32m+[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:36: trailing whitespace.
+[32m+[m[32mconst txOptions = {[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:37: trailing whitespace.
+[32m+[m[32m    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:38: trailing whitespace.
+[32m+[m[32m    maxWait: 5000,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:39: trailing whitespace.
+[32m+[m[32m    timeout: 30000,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:40: trailing whitespace.
+[32m+[m[32m};[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:41: trailing whitespace.
+[32m+[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:42: trailing whitespace.
+[32m+[m[32mconst countSelect = {[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:43: trailing whitespace.
+[32m+[m[32m    id: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:44: trailing whitespace.
+[32m+[m[32m    branchId: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:45: trailing whitespace.
+[32m+[m[32m    businessDate: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:46: trailing whitespace.
+[32m+[m[32m    shift: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:47: trailing whitespace.
+[32m+[m[32m    status: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:48: trailing whitespace.
+[32m+[m[32m    note: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:49: trailing whitespace.
+[32m+[m[32m    returnReason: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:50: trailing whitespace.
+[32m+[m[32m    createdById: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:51: trailing whitespace.
+[32m+[m[32m    approvedById: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:52: trailing whitespace.
+[32m+[m[32m    submittedAt: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:53: trailing whitespace.
+[32m+[m[32m    approvedAt: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:54: trailing whitespace.
+[32m+[m[32m    createdAt: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:55: trailing whitespace.
+[32m+[m[32m    updatedAt: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:56: trailing whitespace.
+[32m+[m[32m    items: {[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:57: trailing whitespace.
+[32m+[m[32m        select: {[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:58: trailing whitespace.
+[32m+[m[32m            ingredientId: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:59: trailing whitespace.
+[32m+[m[32m            countedQuantity: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:60: trailing whitespace.
+[32m+[m[32m            expectedQuantity: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:61: trailing whitespace.
+[32m+[m[32m            variance: true,[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:62: trailing whitespace.
+[32m+[m[32m        },[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:63: trailing whitespace.
+[32m+[m[32m        orderBy: { ingredientId: 'asc' },[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:64: trailing whitespace.
+[32m+[m[32m    },[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:65: trailing whitespace.
+[32m+[m[32m} as const;[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:66: trailing whitespace.
+[32m+[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:67: trailing whitespace.
+[32m+[m[32mfunction actorOf(res: Response): Actor {[m[41m[m
+backend/src/routes/shift-stock-count.routes.ts:68: trailing whitespace.
+[32m+[m[32m    return res.locals.authUser a

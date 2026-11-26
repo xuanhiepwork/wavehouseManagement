@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
 const { Product } = require('../dist/models/Product');
-const { createApp } = require('../dist/app');
+const { createLegacyApp: createApp } = require('./helpers/catalog-app.cjs');
 const { validateBody, validateQuery } = require('../dist/validation/product.validation');
 const { ingredientPaths, ingredientSchemas } = require('../dist/config/ingredient.openapi');
 

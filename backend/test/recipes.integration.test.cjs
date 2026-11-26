@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 const { Recipe } = require('../dist/models/Recipe');
 const { Product } = require('../dist/models/Product');
 const { Ingredient } = require('../dist/models/Ingredient');
-const { createApp } = require('../dist/app');
+const { createLegacyApp: createApp } = require('./helpers/catalog-app.cjs');
 
 // No dotenv, MONGO_URI, default connection string, database/collection drops,
 // or server configuration changes. The operator supplies an isolated test DB.
