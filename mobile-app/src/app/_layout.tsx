@@ -9,18 +9,23 @@ import { RecipeStateProvider } from '../recipes/RecipeState';
 
 /** Root Stack is mounted unconditionally; each protected route uses an AuthGate before rendering data. */
 export default function WaveHouseLayout() {
-  const { generation } = useSyncExternalStore(subscribeAuth, getAuthSnapshot, getAuthSnapshot);
+  const { generation, user } = useSyncExternalStore(subscribeAuth, getAuthSnapshot, getAuthSnapshot);
   return <IngredientStateProvider key={generation}>
       <ProductStateProvider>
         <RecipeStateProvider>
           <StatusBar style="dark" />
           <Stack screenOptions={{
+            headerShown: user !== null,
             headerStyle: { backgroundColor: catalogColors.surface },
             headerTintColor: catalogColors.text,
-            headerTitleStyle: { fontWeight: '700' },
+            headerTitleStyle: { fontWeight: '700', fontSize: 17 },
             contentStyle: { backgroundColor: catalogColors.background },
           }}>
-            <Stack.Screen name="index" options={{title:'WaveHouse'}} />
+            <Stack.Screen name="index" options={{ headerShown: false }} />
+            <Stack.Screen name="work" options={{ headerShown: false }} />
+            <Stack.Screen name="camera" options={{ headerShown: false }} />
+            <Stack.Screen name="history" options={{ headerShown: false }} />
+            <Stack.Screen name="account" options={{ headerShown: false }} />
             <Stack.Screen name="field/sales" options={{title:'Bán hàng'}} />
             <Stack.Screen name="field/sales-edit" options={{title:'Nhập doanh thu'}} />
             <Stack.Screen name="field/sales/[id]" options={{title:'Chi tiết báo cáo'}} />

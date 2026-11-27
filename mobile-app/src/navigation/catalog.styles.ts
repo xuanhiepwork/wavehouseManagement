@@ -1,12 +1,13 @@
 import { StyleSheet } from 'react-native';
+import { palette } from '../design/tokens.ts';
 
 export const catalogColors = {
-  background: '#f4f7f5',
-  surface: '#ffffff',
-  text: '#203b34',
-  muted: '#53695d',
-  accent: '#245b44',
-  border: '#d4e1d8',
+  background: palette.canvas,
+  surface: palette.surface,
+  text: palette.ink,
+  muted: palette.muted,
+  accent: palette.primary,
+  border: palette.border,
 };
 
 export const catalogStyles = StyleSheet.create({
@@ -22,8 +23,8 @@ export const catalogStyles = StyleSheet.create({
     width: '100%',
     maxWidth: 720,
     alignSelf: 'center',
-    padding: 24,
-    gap: 24,
+    padding: 20,
+    gap: 18,
   },
   introduction: {
     gap: 12,
@@ -49,7 +50,7 @@ export const catalogStyles = StyleSheet.create({
     flexShrink: 1,
   },
   links: {
-    gap: 16,
+    gap: 12,
   },
   link: {
     minHeight: 56,
@@ -57,13 +58,13 @@ export const catalogStyles = StyleSheet.create({
     gap: 8,
     borderWidth: 1,
     borderColor: catalogColors.border,
-    borderRadius: 14,
+    borderRadius: 18,
     backgroundColor: catalogColors.surface,
     justifyContent: 'center',
   },
   linkPressed: {
-    backgroundColor: '#eaf3eb',
-    borderColor: '#6d967b',
+    backgroundColor: palette.primarySoft,
+    borderColor: palette.primary,
   },
   linkLabel: {
     color: catalogColors.accent,
@@ -83,7 +84,7 @@ export const catalogStyles = StyleSheet.create({
     gap: 12,
     borderWidth: 1,
     borderColor: catalogColors.border,
-    borderRadius: 14,
+    borderRadius: 18,
     backgroundColor: catalogColors.surface,
   },
   noticeTitle: {

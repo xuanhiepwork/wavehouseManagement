@@ -1,4 +1,5 @@
 import { StyleSheet } from 'react-native';
+import { palette } from '../design/tokens.ts';
 import { catalogColors } from '../navigation/catalog.styles';
 
 export const ingredientStyles = StyleSheet.create({
@@ -13,7 +14,7 @@ export const ingredientStyles = StyleSheet.create({
   body: { color: catalogColors.muted, fontSize: 16, lineHeight: 25, flexShrink: 1 },
   label: { color: catalogColors.muted, fontSize: 14, lineHeight: 22, fontWeight: '600' },
   input: {
-    minHeight: 52, borderWidth: 1, borderColor: '#a9beb0', borderRadius: 9,
+    minHeight: 52, borderWidth: 1, borderColor: palette.border, borderRadius: 13,
     paddingHorizontal: 12, paddingVertical: 12, color: catalogColors.text,
     backgroundColor: catalogColors.surface, fontSize: 16, lineHeight: 24,
   },
@@ -22,21 +23,21 @@ export const ingredientStyles = StyleSheet.create({
   name: { color: catalogColors.text, fontSize: 21, lineHeight: 30, fontWeight: '600', flexShrink: 1 },
   panel: {
     padding: 18, gap: 18, minWidth: 0, borderWidth: 1,
-    borderColor: catalogColors.border, borderRadius: 14, backgroundColor: catalogColors.surface,
+    borderColor: catalogColors.border, borderRadius: 18, backgroundColor: catalogColors.surface,
   },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   choice: {
     minHeight: 48, flexGrow: 1, flexBasis: 120, justifyContent: 'center',
-    borderWidth: 1, borderColor: '#afc3b6', borderRadius: 9,
+    borderWidth: 1, borderColor: palette.border, borderRadius: 13,
     paddingHorizontal: 12, paddingVertical: 12, backgroundColor: catalogColors.surface,
   },
-  choiceSelected: { borderColor: catalogColors.accent, backgroundColor: '#e8f2e9', borderWidth: 2 },
+  choiceSelected: { borderColor: catalogColors.accent, backgroundColor: palette.primarySoft, borderWidth: 2 },
   choiceText: { color: catalogColors.text, fontSize: 15, lineHeight: 23, flexShrink: 1 },
   choiceTextSelected: { color: catalogColors.accent, fontWeight: '700' },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   button: {
     minHeight: 48, justifyContent: 'center', alignItems: 'center',
-    borderWidth: 1, borderColor: '#9bb3a3', borderRadius: 9,
+    borderWidth: 1, borderColor: palette.border, borderRadius: 13,
     paddingHorizontal: 16, paddingVertical: 13, backgroundColor: catalogColors.surface,
   },
   actionButton: { flexGrow: 1, flexBasis: 120 },
@@ -45,7 +46,7 @@ export const ingredientStyles = StyleSheet.create({
   buttonDisabled: { opacity: 0.45 },
   buttonText: { color: catalogColors.accent, fontSize: 16, lineHeight: 24, fontWeight: '600', textAlign: 'center', flexShrink: 1 },
   buttonTextPrimary: { color: '#ffffff' },
-  feedback: { padding: 20, gap: 14, borderRadius: 12, backgroundColor: catalogColors.surface },
+  feedback: { padding: 20, gap: 14, borderRadius: 14, backgroundColor: catalogColors.surface },
   loading: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 12 },
   error: { color: '#873f2c' },
   footer: { marginTop: 20, gap: 16 },

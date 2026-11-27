@@ -7,26 +7,39 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FieldApiError } from './field.api.ts';
 
 /** High-contrast, large touch targets for bright outdoor environments. */
-export const theme = { bg:'#f5f9f7',ink:'#132e26', muted:'#37564b',green:'#145b3f', light:'#e2f2e8',
-  border:'#a6c4b4', white:'#ffffff', danger:'#9d2433', amber:'#8b4d08', gold:'#fff0ce' };
+import { palette, metrics } from '../design/tokens.ts';
+
+/** One outdoor-friendly system shared by all operational screens. */
+export const theme = {
+  bg: palette.canvas, ink: palette.ink, muted: palette.muted,
+  green: palette.primary, light: palette.primarySoft,
+  border: palette.border, white: palette.surface,
+  danger: palette.danger, amber: palette.warningInk, gold: palette.warningSurface,
+};
 export const ux = StyleSheet.create({
-  screen:{flex:1, backgroundColor:theme.bg}, content:{gap:15,paddingHorizontal:18,paddingVertical:20,paddingBottom:56,maxWidth:680,width:'100%',alignSelf:'center'},
-  title:{color:theme.ink,fontSize:28,lineHeight:36,fontWeight:'800'},
-  sub:{color:theme.muted,fontSize:17,lineHeight:26},
-  label:{color:theme.ink,fontSize:17,lineHeight:25,fontWeight:'700'},
-  text:{color:theme.ink,fontSize:16,lineHeight:25},
-  small:{color:theme.muted,fontSize:15,lineHeight:23},
-  card:{backgroundColor:theme.white,borderColor:theme.border,borderWidth:1.5,borderRadius:16,padding:17,gap:10},
-  action:{backgroundColor:theme.green,borderRadius:14,minHeight:58,paddingHorizontal:16,paddingVertical:14,alignItems:'center',justifyContent:'center'},
-  actionText:{color:'#fff',fontSize:18,fontWeight:'800',lineHeight:25,textAlign:'center'},
-  secondary:{backgroundColor:theme.white,borderColor:theme.green,borderWidth:2},
-  secondaryText:{color:theme.green},
-  disabled:{opacity:.45},
-  input:{minHeight:56,borderWidth:1.6,borderColor:theme.border,borderRadius:12,backgroundColor:theme.white,
-    paddingHorizontal:14,paddingVertical:11,fontSize:18,color:theme.ink},
-  badge:{backgroundColor:theme.light,borderRadius:10,paddingHorizontal:10,paddingVertical:5,alignSelf:'flex-start'},
-  warning:{backgroundColor:theme.gold,borderRadius:12,padding:14,gap:5},
-  gap:{gap:12}, row:{flexDirection:'row',gap:10,flexWrap:'wrap',alignItems:'center'},
+  screen: { flex: 1, backgroundColor: theme.bg },
+  content: { gap: 16, paddingHorizontal: metrics.contentPadding, paddingTop: 22,
+    paddingBottom: 64, maxWidth: metrics.contentMaxWidth, width: '100%', alignSelf: 'center' },
+  title: { color: theme.ink, fontSize: 30, lineHeight: 39, fontWeight: '800' },
+  sub: { color: theme.muted, fontSize: 15, lineHeight: 23 },
+  label: { color: theme.ink, fontSize: 18, lineHeight: 26, fontWeight: '800' },
+  text: { color: theme.ink, fontSize: 16, lineHeight: 25 },
+  small: { color: theme.muted, fontSize: 14, lineHeight: 22 },
+  card: { backgroundColor: theme.white, borderColor: theme.border, borderWidth: 1,
+    borderRadius: metrics.radiusLarge, padding: 18, gap: 11 },
+  action: { backgroundColor: theme.green, borderRadius: 14, minHeight: metrics.touch,
+    paddingHorizontal: 16, paddingVertical: 13, alignItems: 'center', justifyContent: 'center' },
+  actionText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', lineHeight: 24, textAlign: 'center' },
+  secondary: { backgroundColor: theme.white, borderColor: theme.border, borderWidth: 1.5 },
+  secondaryText: { color: theme.green },
+  disabled: { opacity: 0.5 },
+  input: { minHeight: 54, borderWidth: 1.5, borderColor: theme.border, borderRadius: 13,
+    backgroundColor: theme.white, paddingHorizontal: 14, paddingVertical: 11, fontSize: 17, color: theme.ink },
+  badge: { backgroundColor: theme.light, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 7,
+    alignSelf: 'flex-start' },
+  warning: { backgroundColor: theme.gold, borderRadius: 14, padding: 16, gap: 6 },
+  gap: { gap: 12 },
+  row: { flexDirection: 'row', gap: 10, flexWrap: 'wrap', alignItems: 'center' },
 });
 export function Page({title,lead,children}: {title:string;lead?:string;children:ReactNode}) {
   return <SafeAreaView edges={['left','right','bottom']} style={ux.screen}>
