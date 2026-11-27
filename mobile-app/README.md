@@ -429,3 +429,20 @@ No live Catalog request, database operation, deployment, dependency operation,
 or Git write was performed. Work began from the clean `test` branch at
 `30b999352659f6c2b69093bd2f9ce16c17cd93d4`. Stopped after Phase 2.5.5.6 for
 review.
+
+
+---
+
+# Tạo địa chỉ domain tạm thời
+```
+cloudflared tunnel --url http://127.0.0.1:5001
+```
+## Lấy địa chỉ trên gắn vào [EXPO_PUBLIC_API_BASE_URL] tại file 'mobile-app/.env.local'
+
+
+# Khởi động dự án
+```
+npx expo start --clear
+```
+
+---
