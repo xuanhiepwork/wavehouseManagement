@@ -103,7 +103,8 @@ export function createCatalogClient(options: CatalogClientOptions = {}) {
       timer = setTimeout(() => { reject(new CatalogApiError('TIMEOUT')); controller.abort(); }, timeoutMs);
     });
     const url = `${base}${path}`;
-    const headers = accessToken ? { Accept: 'application/json', Authorization: `Bearer ${accessToken}` } : { Accept: 'application/json' };
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
     const work = async () => {
       let response: Response;
       try {

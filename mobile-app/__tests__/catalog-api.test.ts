@@ -48,7 +48,7 @@ async function failure(request: Promise<unknown>, code: string, status?: number)
 
 describe('mobile Catalog API configuration', () => {
   const invalidBases = [undefined, '', '/api', 'not a URL', 'ftp://localhost/api', 'postgresql://localhost/db',
-    'https://production.example/api', 'http://localhost.evil/api', 'http://192.168.1.2:5000/api',
+    'http://production.example/api', 'http://localhost.evil/api', 'http://192.168.1.2:5000/api',
     'http://10.0.2.2:5000/api', 'http://user:password@localhost/api', 'http://localhost/api?secret=x',
     'http://localhost/api#secret', 'http://localhost/elsewhere', 'http://localhost/api/recipes'];
   for (const [index, value] of invalidBases.entries()) {
@@ -71,6 +71,12 @@ describe('mobile Catalog API configuration', () => {
       assert.equal(fetch.mock.calls[0].arguments[0], `${new URL(value).origin}/api/ingredients/${ingredientId}`);
     });
   }
+  it('permits a secure hosted HTTPS backend, never downgrade its origin', async () => {
+    const hosted = 'https://production.example/api';
+    const fetch = mock.fn<typeof globalThis.fetch>(async () => json({ data: ingredient }));
+    await createCatalogClient({ baseUrl: hosted, fetch }).ingredients.detail(ingredientId);
+    assert.equal(fetch.mock.calls[0].arguments[0], `${hosted}/ingredients/${ingredientId}`);
+  });
   it('reads the named Expo public environment value without an implicit default', async () => {
     process.env.EXPO_PUBLIC_API_BASE_URL = 'http://localhost:5001/api';
     const fetch = mock.fn<typeof globalThis.fetch>(async () => json({ data: product }));

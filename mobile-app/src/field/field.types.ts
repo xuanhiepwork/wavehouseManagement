@@ -48,9 +48,9 @@ export interface SalesReport {
   branch: NamedPlace; returnReason: string | null;
   allowedActions: { canEdit: boolean; canSubmit: boolean; canReturn: boolean; canApprove: boolean };
   currentRevision: { number:number; note:string|null; discounts:string;
-    lines: Array<{productId: string|null; productNameSnapshot: string;size: string;quantity: number;unitPriceSnapshot: string;note:string|null}>;
-    payments: Array<{channel:SalesChannel;collectedAmount:string;refundedAmount:string;platformFee:string;settlementDifference:string;note:string|null}>;
-    expenses: Array<{channel:SalesChannel;description:string;amount:string}>;
+    lines: {productId: string|null; productNameSnapshot: string;size: string;quantity: number;unitPriceSnapshot: string;note:string|null}[];
+    payments: {channel:SalesChannel;collectedAmount:string;refundedAmount:string;platformFee:string;settlementDifference:string;note:string|null}[];
+    expenses: {channel:SalesChannel;description:string;amount:string}[];
     cash:{openingCash:string;cashHandovers:string;closingCashActual:string|null};
     totals: { grossSales: string; netRecorded: string; salesDifference: string;expectedCash:string;cashDifference:string|null } };
 }

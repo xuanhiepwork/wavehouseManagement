@@ -21,7 +21,7 @@ export class FieldApiError extends Error {
   }
 }
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
-function isItems(value: unknown): value is {items: unknown[]} { return object(value) && Array.isArray(value.items); }
+function isItems(value: unknown): value is {items: unknown[]; total?: unknown} { return object(value) && Array.isArray(value.items); }
 function isData(value: unknown): value is {data: unknown} { return object(value) && 'data' in value; }
 const qs = (input: Readonly<Record<string, string | number | undefined>>) => {
   const params = new URLSearchParams();
@@ -128,7 +128,7 @@ export const fieldApi = {
   counts: async (businessDate: string, signal?: AbortSignal) =>
     items<StockCountSummary>(await call<unknown>(`/shift-stock-counts${qs({businessDate})}`,'GET',undefined,signal)),
   countTemplate: async (branchId:string,businessDate:string,shift:WorkShift,signal?:AbortSignal) =>
-    call<{branchId:string;items:Array<{ingredientId:string;code:string;name:string;unit:string;systemQuantity:string}>}>(
+    call<{branchId:string;items:{ingredientId:string;code:string;name:string;unit:string;systemQuantity:string}[]}>(
       `/shift-stock-counts/template${qs({branchId,businessDate,shift})}`,'GET',undefined,signal),
   inventory: async (branchId: string, page = 1, signal?: AbortSignal) => {
     const raw=await call<unknown>(`/inventory/balances${qs({branchId,page})}`,'GET',undefined,signal);
@@ -137,7 +137,7 @@ export const fieldApi = {
   },
   stockCount: async(id:string,signal?:AbortSignal)=>data<{
     id:string;branchId:string;businessDate:string;shift:WorkShift;status:string;note:string|null;returnReason:string|null;
-    items:Array<{ingredientId:string;countedQuantity:string;expectedQuantity:string|null;variance:string|null}>;
+    items:{ingredientId:string;countedQuantity:string;expectedQuantity:string|null;variance:string|null}[];
   }>(await call<unknown>(`/shift-stock-counts/${validSegment(id)}`,'GET',undefined,signal)),
   createCount: async(payload:{branchId:string;businessDate:string;shift:WorkShift;note:string|null;
     items:{ingredientId:string;countedQuantity:string}[]})=>data<{id:string;status:string}>(
@@ -165,11 +165,11 @@ export const fieldApi = {
     })),
   plans: async(businessDate:string,signal?:AbortSignal)=>items<{
     id:string;areaId:string;status:string;createdById:string;warehouse:{name:string};area:{name:string};
-    lines:Array<{branchId:string;ingredientId:string;quantity:string;branch:{name:string};ingredient:{name:string;unit:string}}>
+    lines:{branchId:string;ingredientId:string;quantity:string;branch:{name:string};ingredient:{name:string;unit:string}}[]
   }>(await call<unknown>(`/restock-approval/plans${qs({businessDate})}`,'GET',undefined,signal)),
   plan: async(id:string,signal?:AbortSignal)=>data<{
     id:string;areaId:string;status:string;createdById:string;warehouse:{name:string};area:{name:string};
-    lines:Array<{branchId:string;ingredientId:string;quantity:string;branch:{name:string};ingredient:{name:string;unit:string}}>
+    lines:{branchId:string;ingredientId:string;quantity:string;branch:{name:string};ingredient:{name:string;unit:string}}[]
   }>(await call<unknown>(`/restock-approval/plans/${validSegment(id)}`,'GET',undefined,signal)),
   reviewPlan: async(id:string,decision:'APPROVED'|'REJECTED',note:string)=>data<unknown>(await call<unknown>(
     `/restock-approval/plans/${validSegment(id)}/review`,'POST',{decision,note:note.trim()||null})),

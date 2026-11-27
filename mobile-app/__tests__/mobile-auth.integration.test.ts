@@ -88,7 +88,7 @@ describe('Mobile Backend authentication contract', () => {
   });
   it('fails closed on unsafe API base URLs before issuing any login request', async () => {
     const fetch = mock.fn<typeof globalThis.fetch>();
-    assert.throws(() => createMobileAuthClient({ baseUrl: 'https://example.com/api', fetch }), { code: 'CONFIGURATION' });
+    assert.throws(() => createMobileAuthClient({ baseUrl: 'http://example.com/api', fetch }), { code: 'CONFIGURATION' });
     assert.equal(fetch.mock.calls.length, 0);
   });
 });

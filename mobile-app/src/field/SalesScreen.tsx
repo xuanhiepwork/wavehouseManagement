@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useState, useSyncExternalStore } from 'react';
 import { View } from 'react-native';
 import { getAuthSnapshot, subscribeAuth } from '../auth/session.ts';
 import { createCatalogClient } from '../api/catalog.ts';
@@ -11,7 +11,7 @@ import { Action, Copy, FieldInput, Header, LoadControl, Page, Panel, Selection, 
 
 const vnd=(value:string):boolean=>/^(?:0|[1-9]\d{0,11})$/.test(value);
 const cleanVnd=(value:string)=>/^\d+\.0+$/.test(value)?value.split('.')[0]:value;
-const channelChoices:[{code:SalesChannel;label:string},...Array<{code:SalesChannel;label:string}>]=[
+const channelChoices:[{code:SalesChannel;label:string},...{code:SalesChannel;label:string}[]]=[
   {code:'CASH',label:'Tiền mặt'},{code:'BANK_TRANSFER',label:'Chuyển khoản'},
   {code:'MOMO',label:'MoMo'},{code:'GRAB',label:'Grab'},{code:'OTHER',label:'Khác'},
 ];
@@ -129,8 +129,9 @@ export function SalesEditScreen({id}: {id?:string}) {
   const report=isEdit?context.value as SalesReport|null:null;
   const ctx=!isEdit?context.value as {branches:{id:string;code:string;name:string}[];assignments:{branchId:string;shift:WorkShift}[]}|null:null;
   // Load one authoritative revision; later refreshes must not erase an employee's unsaved edits.
-  useEffect(()=>{
-    if(!report||loadedEdit===report.id)return;
+  // Set up a freshly opened report once; later refetches must keep unsaved employee edits.
+  // React permits guarded same-component state adjustments during render.
+  if (report && loadedEdit !== report.id) {
     setLoadedEdit(report.id);setEditVersion(report.version);setDate(report.businessDate);setBranchId(report.branchId);setShift(report.shift);
     setLines(report.currentRevision.lines.map(x=>({productId:x.productId,productName:x.productNameSnapshot,
       size:x.size as SalesLine['size'],quantity:x.quantity,unitPrice:x.unitPriceSnapshot,note:x.note})));
@@ -144,7 +145,8 @@ export function SalesEditScreen({id}: {id?:string}) {
     setClosing(report.currentRevision.cash.closingCashActual??'0');
     setCashChecked(report.currentRevision.cash.closingCashActual!==null);
     setMemo(report.currentRevision.note??'');
-  },[report,loadedEdit]);
+    setReady(false);
+  }
   const allowedBranches=ctx?.branches.filter(b=>ctx.assignments.some(a=>a.branchId===b.id&&a.shift===shift))??[];
   const visibleProducts=(products.value??[]).slice(0,30);
   const appendProduct=(product:Product,size:'S'|'M'|'L',price:string)=>{

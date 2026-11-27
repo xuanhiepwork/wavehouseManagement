@@ -1,11 +1,9 @@
 import { useCallback, useState, useSyncExternalStore } from 'react';
 import { router } from 'expo-router';
-import { View } from 'react-native';
 import { getAuthSnapshot, subscribeAuth } from '../auth/session.ts';
 import { fieldApi } from './field.api.ts';
-import type { DeliveryTrip } from './field.types.ts';
 import { Action, Copy, FieldInput, Header, LoadControl, Page, Panel, StateNotice,
-  Status, Warning, businessToday, useFieldRead, useSafeMutation, ux } from './field.ui.tsx';
+  Status, Warning, businessToday, useFieldRead, useSafeMutation } from './field.ui.tsx';
 
 export function DeliveryScreen() {
   const {user}=useSyncExternalStore(subscribeAuth,getAuthSnapshot,getAuthSnapshot);

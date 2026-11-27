@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useState, useSyncExternalStore } from 'react';
 import { View } from 'react-native';
 import { getAuthSnapshot, subscribeAuth } from '../auth/session.ts';
 import { fieldApi } from './field.api.ts';
@@ -132,12 +132,14 @@ export function CountEditScreen({id}:{id:string}) {
   const [verified,setVerified]=useState(false);
   const mutation=useSafeMutation();
   const record=query.value;
-  useEffect(()=>{
-    if(!record||record.id===original)return;
+  // Initialize once for each new record ID; guarded render-phase adjustment avoids effect cascades.
+  // Refreshing the same record must not erase unsaved field edits.
+  if (record && record.id !== original) {
     setOriginal(record.id);
-    setNote(record.note??'');
-    setValues(Object.fromEntries(record.items.map(item=>[item.ingredientId,String(item.countedQuantity)])));
-  },[record,original]);
+    setNote(record.note ?? '');
+    setValues(Object.fromEntries(record.items.map(item => [item.ingredientId, String(item.countedQuantity)])));
+    setVerified(false);
+  }
   const editable=user?.role==='STAFF'&&!!record&&['DRAFT','RETURNED'].includes(record.status);
   const valid=!!record?.items.length&&record.items.every(item=>parseQuantity(values[item.ingredientId]??''));
   return <Page title="Bổ sung phiếu kiểm kê" lead="Chỉ sửa phiếu bản nháp hoặc bị trả lại. Mọi số lượng là số thực đếm, không phải số hệ thống.">

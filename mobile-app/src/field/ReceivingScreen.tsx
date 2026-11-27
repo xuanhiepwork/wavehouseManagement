@@ -1,9 +1,8 @@
 import { router } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { fieldApi } from './field.api.ts';
-import type { DeliveryStop } from './field.types.ts';
 import { Action, Copy, FieldInput, Header, LoadControl, Page, Panel, StateNotice, Status, Warning,
-  businessToday, parseQuantity, useFieldRead, useSafeMutation, ux } from './field.ui.tsx';
+  businessToday, parseQuantity, useFieldRead, useSafeMutation } from './field.ui.tsx';
 function decimalUnits(value:string):bigint|null {
   if(!parseQuantity(value))return null;
   const [whole,fraction='']=value.split('.');
@@ -37,13 +36,15 @@ export function ReceiveStopScreen({tripId,stopId}: {tripId:string;stopId:string}
   const [checked,setChecked]=useState(false);
   const [initialised,setInitialised]=useState<string|null>(null);
   const mutation=useSafeMutation();
-  useEffect(()=>{
-    if(!stop||initialised===stop.id)return;
-    setQuantities(Object.fromEntries(stop.items.map(item=>[item.ingredientId,{
-      received:item.receivedQuantity??'',damaged:item.damagedQuantity??'0',
+  // Reset only when navigating to another stop; don't overwrite in-progress counts on refresh.
+  if (stop && initialised !== stop.id) {
+    setQuantities(Object.fromEntries(stop.items.map(item => [item.ingredientId, {
+      received: item.receivedQuantity ?? '', damaged: item.damagedQuantity ?? '0',
     }])));
-    setChecked(false);setInitialised(stop.id);
-  },[stop,initialised]);
+    setChecked(false);
+    setNote('');
+    setInitialised(stop.id);
+  }
   const lines=stop?.items.map(item=>{
     const quantity=quantities[item.ingredientId];
     const received=quantity?decimalUnits(quantity.received):null;
