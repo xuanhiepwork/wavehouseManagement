@@ -1548,6 +1548,24 @@ WaveHouseManagement được thiết kế dựa trên mô hình vận hành th�
 *Tài liệu này cần được cập nhật khi quy trình vận hành, Database, API hoặc chức năng hệ thống thay đổi.*
 
 
+---
+
+# Cách đóng gói những file bản thân cần thành 1 file zip:
+```
+$repo = "D:\code\DoAn\WaveHouseManagement"
+
+$files = @(
+    "$repo\backend\src",
+    "$repo\backend\prisma"
+)
+
+Compress-Archive `
+    -Path $files `
+    -DestinationPath "$env:USERPROFILE\Documents\WaveHouse_Backend_Source_D2.zip" `
+    -Force
+```
+
+
 
 ---
 ### TÀI KHOẢN

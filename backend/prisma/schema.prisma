@@ -226,6 +226,7 @@ model User {
   writeOffsCreated StockWriteOff[] @relation("WriteOffCreator")
   writeOffsReviewed StockWriteOff[] @relation("WriteOffReviewer")
   writeOffEvents StockWriteOffEvent[]
+  evidenceAttachments EvidenceAttachment[]
 
   @@index([branchId, isActive])
   @@index([areaId, role, isActive])
@@ -1151,4 +1152,38 @@ model StockWriteOffEvent {
   actor User @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   @@index([writeOffId, createdAt], map: "stock_writeoff_events_writeoff_time_idx")
   @@map("stock_writeoff_events")
+}
+
+// Private audit evidence. Polymorphic target references are checked in evidence.service.ts.
+enum EvidenceTargetType {
+  TRIP
+  STOP
+  COUNT
+}
+
+enum EvidenceKind {
+  DELIVERY
+  RECEIVING
+  INVENTORY
+  DAMAGE
+}
+
+model EvidenceAttachment {
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  targetType  EvidenceTargetType  @map("target_type")
+  targetId    String              @map("target_id") @db.Uuid
+  kind        EvidenceKind
+  note        String?             @db.VarChar(500)
+  mimeType    String              @map("mime_type") @db.VarChar(32)
+  byteSize    Int                 @map("byte_size")
+  sha256      String              @db.VarChar(64)
+  photoBytes  Bytes               @map("photo_bytes") @db.ByteA
+  createdById String              @map("created_by_id") @db.Uuid
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy   User                @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([targetType, targetId, sha256], map: "evidence_attachments_target_hash_key")
+  @@index([targetType, targetId, createdAt], map: "evidence_attachments_target_created_idx")
+  @@index([createdById, createdAt], map: "evidence_attachments_creator_created_idx")
+  @@map("evidence_attachments")
 }

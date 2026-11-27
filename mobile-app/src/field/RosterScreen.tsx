@@ -2,6 +2,8 @@ import { useCallback, useState, useSyncExternalStore } from 'react';
 import { getAuthSnapshot, subscribeAuth } from '../auth/session.ts';
 import { fieldApi } from './field.api.ts';
 import type { WorkShift } from './field.types.ts';
+import { FieldFormNotice, FieldFormReview, FieldFormToggle } from './FieldForm.ts';
+import { FieldEmptyRecords, FieldListHeading } from './FieldRecordUI.tsx';
 import { Action, Copy, FieldInput, Header, LoadControl, Page, Panel, Selection, StateNotice,
   Status, Warning, businessToday, formatShift, shifts, useFieldRead, useSafeMutation } from './field.ui.tsx';
 
@@ -37,14 +39,20 @@ export function RosterScreen(){
       }}/>
       <Header>Ca muốn xếp</Header><Selection options={shifts} value={shift} onChange={v=>{setShift(v);setWorker('');setConfirm(false);}}/>
     </Panel>
-    <Header>Ca đã phân công</Header>
+    <FieldListHeading title="Ca đã phân công" count={roster.value ? assignments.filter(a=>a.shift===shift).length : undefined} unit="ca"/>
     {assignments.filter(a=>a.shift===shift).map(a=><Panel key={a.id}>
       <Header>{a.user?.displayName??'Nhân viên'}</Header>
       <Copy>{a.branch?.name??'Quầy'} · {formatShift(a.shift)}</Copy><Status>{a.status}</Status>
       {a.status==='SCHEDULED'?<>
         <Action secondary label="Xem yêu cầu hủy phân công" onPress={()=>setCancelId(a.id)}/>
         {cancelId===a.id?<>
-          <Warning>Hủy phân công sẽ cập nhật lịch máy chủ. Thông báo trực tiếp cho nhân viên sau khi trạng thái được xác nhận.</Warning>
+          <FieldFormReview title="Rà soát hủy ca" items={[
+            {label:'Nhân viên',value:a.user?.displayName??'—'},
+            {label:'Quầy',value:a.branch?.name??'—'},
+            {label:'Ngày',value:day},
+            {label:'Ca',value:formatShift(a.shift)},
+          ]}/>
+          <FieldFormNotice tone="warning" message="Hủy ca sẽ cập nhật lịch trên máy chủ. Hãy thông báo trực tiếp cho nhân viên sau khi xác nhận."/>
           <Action disabled={mutation.busy} label={mutation.busy?'Đang xử lý...':'XÁC NHẬN HỦY CA'} onPress={()=>{
             void mutation.execute(()=>fieldApi.changeAssignment(a.id,a.version,{status:'CANCELLED'}),()=>{
               setCancelId(null);void roster.refresh();
@@ -55,9 +63,10 @@ export function RosterScreen(){
       </>:null}
     </Panel>)}
     <LoadControl loading={roster.loading} error={roster.error} onRefresh={()=>{void roster.refresh();}}/>
+    {roster.value!==null&&!assignments.some(a=>a.shift===shift)?<FieldEmptyRecords title="Chưa có phân công trong ca này"/>:null}
     <Header>Xếp ca mới</Header>
     <Panel>
-      <Warning>Người bán phải tự xác nhận rảnh trước. Không tự động chuyển nhân viên giữa các quầy, không đè lên ca đã tạo.</Warning>
+      <FieldFormNotice tone="warning" message="Người bán phải tự xác nhận rảnh trước. Backend sẽ kiểm tra trùng ca và phạm vi khu vực."/>
       <Header>Nhân viên đã đăng ký rảnh</Header>
       {available.map(u=><Action key={u.id} secondary={worker!==u.id} label={`${worker===u.id?'✓ ':''}${u.displayName}`}
         onPress={()=>{setWorker(u.id);setConfirm(false);}}/>)}
@@ -65,8 +74,14 @@ export function RosterScreen(){
       <Header>Quầy trong khu vực</Header>
       {roster.value?.branches.filter(b=>b.isActive!==false).map(b=><Action key={b.id}
         secondary={branch!==b.id} label={`${branch===b.id?'✓ ':''}${b.name}`} onPress={()=>{setBranch(b.id);setConfirm(false);}}/>)}
-      <Action secondary label={confirm?'✓ Đã đối chiếu lịch':'Tôi đã kiểm tra nhân viên và quầy'}
-        disabled={!worker||!branch||mutation.busy} onPress={()=>setConfirm(v=>!v)}/>
+      <FieldFormReview title="Rà soát trước khi phân ca" items={[
+        {label:'Ngày',value:day},
+        {label:'Ca',value:formatShift(shift)},
+        {label:'Nhân viên',value:roster.value?.users.find(u=>u.id===worker)?.displayName??'Chưa chọn'},
+        {label:'Quầy',value:roster.value?.branches.find(b=>b.id===branch)?.name??'Chưa chọn'},
+      ]}/>
+      <FieldFormToggle label="Tôi đã đối chiếu nhân viên và quầy" value={confirm}
+        onChange={setConfirm} disabled={!worker||!branch||mutation.busy}/>
       <Action label={mutation.busy?'Đang phân công...':'XÁC NHẬN PHÂN CA'}
         disabled={!worker||!branch||!confirm||mutation.busy} onPress={()=>{void mutation.execute(()=>fieldApi.createAssignment({
           userId:worker,branchId:branch,businessDate:day,shift,

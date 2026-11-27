@@ -8,6 +8,7 @@ import { FieldApiError } from './field.api.ts';
 
 /** High-contrast, large touch targets for bright outdoor environments. */
 import { palette, metrics } from '../design/tokens.ts';
+import { fieldStatusPresentation } from './field.status.ts';
 
 /** One outdoor-friendly system shared by all operational screens. */
 export const theme = {
@@ -71,7 +72,21 @@ export function Warning({children}: {children:ReactNode}) { return <View style={
 export function StateNotice({error}: {error:unknown}) { return <View style={ux.warning}>
   <Copy>{error instanceof Error ? error.message : 'Không thể tải dữ liệu. Vui lòng thử tải lại.'}</Copy>
 </View>; }
-export function Status({children}: {children:ReactNode}) {return <View style={ux.badge}><Copy small>{children}</Copy></View>;}
+export function Status({children}: {children:ReactNode}) {
+  const presentation = typeof children === 'string' ? fieldStatusPresentation(children) : null;
+  const tone = presentation?.tone ?? 'neutral';
+  const backgroundColor = tone === 'success' ? palette.successSurface
+    : tone === 'danger' ? palette.dangerSurface
+    : tone === 'warning' ? palette.warningSurface
+    : tone === 'info' ? palette.primarySoft : palette.beigeLight;
+  const color = tone === 'success' ? palette.success : tone === 'danger' ? palette.danger
+    : tone === 'warning' ? palette.warningInk : palette.primary;
+  return <View style={[ux.badge, {backgroundColor}]}>
+    <Text allowFontScaling style={{color, fontSize: 14, fontWeight: '700', lineHeight: 21}}>
+      {presentation?.label ?? children}
+    </Text>
+  </View>;
+}
 
 /** Use Vietnam business date even if handset timezone differs. */
 export function businessToday(now = new Date()):string {

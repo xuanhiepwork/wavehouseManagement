@@ -2,6 +2,8 @@ import { router } from 'expo-router';
 import { useCallback, useState, useSyncExternalStore } from 'react';
 import { getAuthSnapshot, subscribeAuth } from '../auth/session.ts';
 import { fieldApi } from './field.api.ts';
+import { FieldFormNotice, FieldFormReview, FieldFormSection } from './FieldForm.ts';
+import { FieldEmptyRecords, FieldFactRow, FieldListHeading } from './FieldRecordUI.tsx';
 import { Action, Copy, FieldInput, Header, LoadControl, Page, Panel, StateNotice,
   Status, Warning, businessToday, useFieldRead, useSafeMutation } from './field.ui.tsx';
 
@@ -20,23 +22,24 @@ export function ManagerScreen(){
     </Panel>
     <Header>Tình hình vận hành</Header>
     {summary.value?<Panel>
-      <Copy>Quầy thuộc phạm vi: {summary.value.branchCount}</Copy>
-      <Copy>Điểm chờ nhận hàng: {summary.value.pendingReceivingStops}</Copy>
-      <Copy>Điểm đã nhận: {summary.value.receivedStops}</Copy>
-      <Copy>Điểm sai lệch: {summary.value.discrepantStops}</Copy>
-      <Copy>Báo cáo bán chờ duyệt: {summary.value.submittedSalesReports}</Copy>
-      <Copy>Phiếu kiểm kê đã nộp: {summary.value.submittedStockCounts}</Copy>
+      <FieldFactRow label="Quầy thuộc phạm vi" value={summary.value.branchCount}/>
+      <FieldFactRow label="Điểm chờ nhận hàng" value={summary.value.pendingReceivingStops} emphasis/>
+      <FieldFactRow label="Điểm đã nhận" value={summary.value.receivedStops}/>
+      <FieldFactRow label="Điểm sai lệch" value={summary.value.discrepantStops} emphasis/>
+      <FieldFactRow label="Báo cáo bán chờ duyệt" value={summary.value.submittedSalesReports} emphasis/>
+      <FieldFactRow label="Phiếu kiểm kê đã nộp" value={summary.value.submittedStockCounts}/>
     </Panel>:null}
     <LoadControl loading={summary.loading} error={summary.error} onRefresh={()=>{void summary.refresh();}}/>
     <Action label="Mở báo cáo bán hàng" onPress={()=>router.push('/field/sales')}/>
     <Action secondary label="Mở lịch phân ca" onPress={()=>router.push('/field/schedule')}/>
-    <Header>Phiếu kiểm kê chờ xử lý</Header>
+    <FieldListHeading title="Phiếu kiểm kê chờ xử lý" count={counts.value?.filter(c=>c.status==='SUBMITTED'||c.status==='RETURNED').length} unit="phiếu"/>
     {counts.value?.filter(c=>c.status==='SUBMITTED'||c.status==='RETURNED').map(c=><Panel key={c.id}>
       <Header>{String(c.businessDate).slice(0,10)} · {c.shift}</Header><Status>{c.status}</Status>
       <Action secondary label="Mở phiếu kiểm kê" onPress={()=>router.push({pathname:'/field/count/[id]',params:{id:c.id}})}/>
     </Panel>)}
+    {counts.value!==null&&!counts.value.some(c=>c.status==='SUBMITTED'||c.status==='RETURNED')?<FieldEmptyRecords title="Không có phiếu cần xử lý"/>:null}
     <LoadControl loading={counts.loading} error={counts.error} onRefresh={()=>{void counts.refresh();}}/>
-    <Header>Kế hoạch bổ sung hàng</Header>
+    <FieldListHeading title="Kế hoạch bổ sung hàng" count={plans.value?.length} unit="kế hoạch"/>
     <Warning>Đề xuất phải được ADMIN khác người lập duyệt; chỉ chuyến được chuyển đổi từ kế hoạch đã duyệt mới được xuất kho.</Warning>
     {plans.value?.map(plan=><Panel key={plan.id}>
       <Header>{plan.area?.name??'Khu vực'} · {plan.warehouse?.name??'Kho'}</Header>
@@ -44,14 +47,14 @@ export function ManagerScreen(){
       <Copy>{plan.lines.length} dòng nguyên liệu</Copy>
       <Action secondary label="Chi tiết kế hoạch" onPress={()=>router.push({pathname:'/field/plan/[id]',params:{id:plan.id}})}/>
     </Panel>)}
-    {!plans.value?.length&&!plans.loading?<Copy>Chưa có kế hoạch trong ngày này.</Copy>:null}
+    {plans.value!==null&&plans.value.length===0?<FieldEmptyRecords title="Chưa có kế hoạch trong ngày"/>:null}
     <LoadControl loading={plans.loading} error={plans.error} onRefresh={()=>{void plans.refresh();}}/>
-    <Header>Sai lệch nhận hàng</Header>
+    <FieldListHeading title="Sai lệch nhận hàng" count={discrepancy.value?.length} unit="hồ sơ"/>
     {discrepancy.value?.map(item=><Panel key={item.id}>
       <Header>Hồ sơ {item.id.slice(0,8)}</Header><Status>{item.status}</Status>
       <Copy small>{item.stop?.branch?.name??item.branch?.name??'Quầy'}</Copy>
     </Panel>)}
-    {!discrepancy.value?.length&&!discrepancy.loading?<Copy>Không có hồ sơ sai lệch trong ngày.</Copy>:null}
+    {discrepancy.value!==null&&discrepancy.value.length===0?<FieldEmptyRecords title="Không có hồ sơ sai lệch trong ngày"/>:null}
     <LoadControl loading={discrepancy.loading} error={discrepancy.error} onRefresh={()=>{void discrepancy.refresh();}}/>
     <Copy small>Phê duyệt hay điều chỉnh tồn kho chỉ hiển thị khi đủ quyền trên Backend. Không có thao tác duyệt hàng loạt một chạm.</Copy>
   </Page>;
@@ -72,9 +75,14 @@ export function PlanScreen({id}: {id:string}) {
         <Header>{line.branch?.name??'Quầy'}</Header>
         <Copy>{line.ingredient?.name??'Nguyên liệu'} · {String(line.quantity)} {line.ingredient?.unit??''}</Copy>
       </Panel>)}
-      {canReview?<Panel>
-        <Header>Quyết định của quản trị</Header>
-        <Warning>Không được tự duyệt đề xuất đã lập. Phê duyệt chưa tạo chuyến hoặc làm giảm tồn kho. Phải qua bước chuyển đổi/điều phối kế tiếp.</Warning>
+      {canReview?<FieldFormSection title="Quyết định của quản trị" description="Chỉ ADMIN khác người lập mới có thể phê duyệt.">
+        <FieldFormReview title="Rà soát đề xuất" items={[
+          {label:'Khu vực',value:data.area?.name??'—'},
+          {label:'Kho',value:data.warehouse?.name??'—'},
+          {label:'Trạng thái',value:data.status},
+          {label:'Số dòng nguyên liệu',value:data.lines.length,emphasis:true},
+        ]}/>
+        <FieldFormNotice tone="warning" message="Duyệt kế hoạch không tự tạo chuyến hoặc làm giảm tồn kho; cần tiếp tục bước điều phối theo quy trình."/>
         <Action label="Xem xác nhận duyệt" onPress={()=>setDecision('APPROVED')}/>
         <Action secondary label="Từ chối đề xuất" onPress={()=>setDecision('REJECTED')}/>
         {decision?<>
@@ -88,7 +96,7 @@ export function PlanScreen({id}: {id:string}) {
           <Action secondary label="Đóng xác nhận" onPress={()=>setDecision(null)}/>
         </>:null}
         {mutation.error?<StateNotice error={mutation.error}/>:null}
-      </Panel>:null}
+      </FieldFormSection>:null}
     </>:<Copy>Kế hoạch không nằm trong danh sách của ngày hiện tại hoặc bạn không được phân quyền.</Copy>}
     <LoadControl loading={plan.loading} error={plan.error} onRefresh={()=>{void plan.refresh();}}/>
   </Page>;

@@ -5,6 +5,8 @@ import { getAuthSnapshot, subscribeAuth } from '../auth/session.ts';
 import { createCatalogClient } from '../api/catalog.ts';
 import type { Product } from '../api/catalog.types.ts';
 import { fieldApi } from './field.api.ts';
+import { FieldFormNotice, FieldFormReview, FieldFormSection, FieldFormTextInput, FieldFormToggle } from './FieldForm.ts';
+import { FieldEmptyRecords, FieldFactRow, FieldListHeading } from './FieldRecordUI.tsx';
 import type { SalesChannel, SalesInput, SalesLine, SalesReport, WorkContext, WorkShift } from './field.types.ts';
 import { Action, Copy, FieldInput, Header, LoadControl, Page, Panel, Selection, StateNotice,
   Status, Warning, businessToday, formatShift, shifts, useFieldRead, useSafeMutation, ux } from './field.ui.tsx';
@@ -28,15 +30,15 @@ export function SalesScreen(){
       <Action label="Xem báo cáo ngày" onPress={()=>{setPage(1);setSelectedDay(day);}} disabled={!/^\d{4}-\d{2}-\d{2}$/.test(day)}/>
     </Panel>
     {user?.role==='STAFF'&&user.workKind==='SALES'?<Action label="+ Tạo báo cáo theo ca" onPress={()=>router.push('/field/sales-edit')}/>:null}
-    <Header>Báo cáo ngày {selectedDay}</Header>
+    <FieldListHeading title={`Báo cáo ngày ${selectedDay}`} count={query.value?.total} unit="báo cáo"/>
     {query.value?.items.map(report=><Panel key={report.id}>
       <Header>{report.branch?.name??'Quầy'} · {formatShift(report.shift)}</Header>
       <Status>{visibleStatus[report.status]??report.status}</Status>
       <Copy small>Ngày {report.businessDate} · Phiên bản {report.version}</Copy>
-      <Copy>Doanh thu ghi nhận: {report.currentRevision?.totals?.netRecorded??'—'} VND</Copy>
+      <FieldFactRow label="Doanh thu ghi nhận (VND)" value={report.currentRevision?.totals?.netRecorded} emphasis/>
       <Action secondary label="Mở báo cáo và các thao tác" onPress={()=>router.push({pathname:'/field/sales/[id]',params:{id:report.id}})}/>
     </Panel>)}
-    {!query.value?.items.length&&!query.loading?<Copy>Không có báo cáo trong ngày này.</Copy>:null}
+    {query.value!==null&&query.value.items.length===0?<FieldEmptyRecords title="Không có báo cáo" description="Chưa có báo cáo phù hợp với ngày và trang đang xem."/>:null}
     {query.value&&query.value.total>20?<View style={ux.row}>
       <Action secondary disabled={page===1} label="Trang trước" onPress={()=>setPage(p=>Math.max(1,p-1))}/>
       <Copy>Trang {page}</Copy>
@@ -64,7 +66,8 @@ export function SalesReportScreen({id}: {id:string}) {
     {report?<>
       <Panel><Header>{report.branch?.name??'Quầy'} · {formatShift(report.shift)}</Header>
         <Status>{visibleStatus[report.status]??report.status}</Status>
-        <Copy>Ngày {report.businessDate} · Phiên bản {report.version}</Copy>
+        <FieldFactRow label="Ngày kinh doanh" value={report.businessDate}/>
+        <FieldFactRow label="Phiên bản" value={report.version}/>
         {report.returnReason?<Warning>Yêu cầu bổ sung: {report.returnReason}</Warning>:null}
       </Panel>
       <Panel><Header>Chi tiết sản phẩm</Header>
@@ -82,14 +85,21 @@ export function SalesReportScreen({id}: {id:string}) {
       {allowed?.canSubmit?<Action label="Chuẩn bị gửi báo cáo duyệt" onPress={()=>setArmed('submit')}/>:null}
       {allowed?.canApprove?<Action label="Xem xác nhận phê duyệt" onPress={()=>setArmed('approve')}/>:null}
       {allowed?.canReturn?<Action secondary label="Trả lại để bổ sung" onPress={()=>setArmed('return')}/>:null}
-      {armed?<Panel>
-        <Header>{armed==='submit'?'Gửi báo cáo chính thức':armed==='approve'?'Phê duyệt báo cáo':'Trả lại báo cáo'}</Header>
-        <Warning>Hãy đọc kỹ số liệu. Thao tác sẽ ghi nhận trên máy chủ với phiên bản đang hiển thị. Không gửi lại khi mạng không rõ trạng thái.</Warning>
+      {armed?<FieldFormSection title={armed==='submit'?'Gửi báo cáo chính thức':armed==='approve'?'Phê duyệt báo cáo':'Trả lại báo cáo'}>
+        <FieldFormReview items={[
+          {label:'Quầy',value:report.branch?.name??'—'},
+          {label:'Ca làm',value:formatShift(report.shift)},
+          {label:'Số dòng sản phẩm',value:report.currentRevision.lines.length},
+          {label:'Thanh toán ghi nhận (VND)',value:report.currentRevision.totals.netRecorded,emphasis:true},
+          {label:'Chênh lệch (VND)',value:report.currentRevision.totals.salesDifference},
+          {label:'Phiên bản',value:report.version},
+        ]}/>
+        <FieldFormNotice tone="warning" message="Thao tác ghi trên máy chủ theo phiên bản đang xem. Khi mạng không rõ trạng thái, kiểm tra báo cáo trước khi gửi lại."/>
         {armed==='return'?<FieldInput label="Lý do yêu cầu bổ sung" value={reason} onChangeText={setReason} multiline/>:null}
         <Action label={mutation.busy?'Đang xử lý...':'XÁC NHẬN THAO TÁC'}
           disabled={mutation.busy||(armed==='return'&&!reason.trim())} onPress={()=>process(armed)}/>
         <Action secondary label="Hủy xác nhận" onPress={()=>setArmed(null)}/>
-      </Panel>:null}
+      </FieldFormSection>:null}
       {mutation.error?<StateNotice error={mutation.error}/>:null}
     </>:!query.loading?<Copy>Báo cáo không còn tồn tại hoặc không thuộc phạm vi của bạn.</Copy>:null}
     <LoadControl loading={query.loading} error={query.error} onRefresh={()=>{void query.refresh();}}/>
@@ -173,12 +183,14 @@ export function SalesEditScreen({id}: {id?:string}) {
     });};
   if(user?.role==='BRANCH_MANAGER')return <Page title="Không thể lập báo cáo"><Warning>Quản lý khu duyệt báo cáo, không lập báo cáo thay nhân viên.</Warning></Page>;
   return <Page title={id?'Sửa báo cáo':'Tạo báo cáo bán hàng'} lead="Ghi nhanh theo sản phẩm và size. Lưu bản nháp trước, sau đó kiểm tra và gửi duyệt riêng.">
-    <Warning>Dữ liệu chỉ gửi một lần khi bạn xác nhận. Khi gặp timeout, hãy trở lại danh sách và kiểm tra trước khi lập bản mới.</Warning>
+    <FieldFormNotice tone="warning" title="Lưu báo cáo theo ca" message="Báo cáo lưu bản nháp trước. Nếu timeout, hãy trở về danh sách kiểm tra trước khi tạo hoặc gửi lại."/>
     {id?<Panel><Header>Báo cáo: {report?.branch?.name??'Đang tải'}</Header>
       <Status>{report?.status??'...'}</Status>
       {report&&!report.allowedActions.canEdit?<Warning>Báo cáo này không còn được phép chỉnh sửa.</Warning>:null}
     </Panel>:<Panel>
-      <FieldInput label="Ngày bán (YYYY-MM-DD)" value={date} onChangeText={value=>{setDate(value);setBranchId('');setReady(false);}}/>
+      <FieldFormTextInput label="Ngày bán (YYYY-MM-DD)" value={date} required
+        error={/^\d{4}-\d{2}-\d{2}$/.test(date)?undefined:'Nhập theo định dạng YYYY-MM-DD.'}
+        onChangeText={value=>{setDate(value);setBranchId('');setReady(false);}}/>
       <Action secondary label="Tải phân công ngày đã nhập" onPress={()=>setContextDate(date)} disabled={!/^\d{4}-\d{2}-\d{2}$/.test(date)}/>
       <Header>Ca làm</Header><Selection options={shifts} value={shift} onChange={value=>{setShift(value);setBranchId('');setReady(false);}}/>
       <Header>Quầy được phân công</Header>
@@ -198,14 +210,20 @@ export function SalesEditScreen({id}: {id?:string}) {
       <LoadControl loading={products.loading} error={products.error} onRefresh={()=>{void products.refresh();}}/>
     </Panel>
     <Header>Giỏ số liệu bán trong ca</Header>
+    <FieldFormNotice message={`Đã chọn ${lines.length}/100 dòng sản phẩm. Chỉnh số lượng và đơn giá theo dữ liệu ca thực tế.`}/>
     {lines.map((line,i)=><Panel key={`${line.productId}-${line.size}-${i}`}>
       <Header>{line.productName} · Size {line.size}</Header>
-      <FieldInput label="Số lượng" value={String(line.quantity)} keyboardType="number-pad" onChangeText={value=>{
-        setReady(false);setLines(list=>list.map((v,k)=>k===i?{...v,quantity:Number(value)}:v));
-      }}/>
-      <FieldInput label="Đơn giá VND" value={line.unitPrice} keyboardType="number-pad" onChangeText={value=>{
-        setReady(false);setLines(list=>list.map((v,k)=>k===i?{...v,unitPrice:value}:v));
-      }}/>
+      <FieldFormTextInput label="Số lượng" required value={Number.isNaN(line.quantity)?'':String(line.quantity)}
+        keyboardType="number-pad" error={!Number.isSafeInteger(line.quantity)||line.quantity<=0||line.quantity>999999?
+          'Nhập số nguyên từ 1 đến 999999.':undefined}
+        onChangeText={value=>{
+          setReady(false);setLines(list=>list.map((v,k)=>k===i?{...v,quantity:value.trim()===''?NaN:Number(value)}:v));
+        }}/>
+      <FieldFormTextInput label="Đơn giá VND" required value={line.unitPrice} keyboardType="number-pad"
+        error={!vnd(line.unitPrice)?'Nhập số nguyên VND không âm.':undefined}
+        onChangeText={value=>{
+          setReady(false);setLines(list=>list.map((v,k)=>k===i?{...v,unitPrice:value}:v));
+        }}/>
       <Action secondary label="Xóa dòng" onPress={()=>{setReady(false);setLines(list=>list.filter((_,k)=>k!==i));}}/>
     </Panel>)}
     {!lines.length?<Copy>Chưa chọn sản phẩm. Thêm từng món/size trước khi lưu nháp.</Copy>:null}
@@ -213,7 +231,7 @@ export function SalesEditScreen({id}: {id?:string}) {
     <Panel>
       <Header>Tiền hàng tính từ giỏ: {gross.toString()} VND</Header>
       <Copy>Trừ giảm giá: {expected.toString()} VND · Tổng đã thu trừ hoàn: {collected.toString()} VND</Copy>
-      {expected!==collected?<Warning>Chênh lệch tạm tính {String(collected-expected)} VND. Đối chiếu kênh thanh toán trước khi lưu.</Warning>:null}
+      {expected!==collected?<FieldFormNotice tone="warning" message={`Chênh lệch tạm tính ${String(collected-expected)} VND. Đối chiếu kênh thanh toán trước khi lưu.`}/>:null}
       <FieldInput label="Giảm giá tổng (VND)" value={discounts} keyboardType="number-pad" onChangeText={v=>{setReady(false);setDiscounts(v);}}/>
       <Header>Các kênh thanh toán</Header>
       {payments.map((payment,i)=><Panel key={i}>
@@ -257,14 +275,26 @@ export function SalesEditScreen({id}: {id?:string}) {
       }}/>
       <FieldInput label="Tiền đầu ca (VND)" value={opening} keyboardType="number-pad" onChangeText={v=>{setReady(false);setOpening(v);}}/>
       <FieldInput label="Bàn giao tiền trong ca (VND)" value={handovers} keyboardType="number-pad" onChangeText={v=>{setReady(false);setHandovers(v);}}/>
-      <Action secondary label={cashChecked?'✓ Đã kiểm đếm tiền mặt cuối ca':'Chưa kiểm tiền mặt cuối ca'}
-        onPress={()=>{setReady(false);setCashChecked(v=>!v);}}/>
+      <FieldFormToggle label="Đã kiểm đếm tiền mặt cuối ca" value={cashChecked}
+        description="Bật chỉ khi đã đếm tiền thật; số cuối ca sẽ được gửi trong báo cáo."
+        onChange={next=>{setReady(false);setCashChecked(next);}} disabled={mutation.busy}/>
       {cashChecked?<FieldInput label="Tiền mặt cuối ca thực đếm (VND)" value={closing} keyboardType="number-pad" onChangeText={v=>{setReady(false);setClosing(v);}}/>:null}
       <FieldInput label="Ghi chú" value={memo} onChangeText={v=>{setReady(false);setMemo(v);}} multiline/>
     </Panel>
-    <Warning>Đối chiếu từng kênh, khoản hoàn và chi phí. Chênh lệch sẽ được Backend tính lại khi nộp báo cáo. Bản nháp chưa phải số liệu đã duyệt.</Warning>
-    <Action secondary label={ready?'✓ Đã xác nhận số liệu':'Tôi đã kiểm tra sản phẩm, số tiền và quầy'}
-      disabled={!valid||mutation.busy} onPress={()=>setReady(v=>!v)}/>
+    <FieldFormSection title="Rà soát trước khi lưu" description="Các số tiền hiển thị là tạm tính từ thông tin bạn nhập; máy chủ sẽ tính lại.">
+      <FieldFormReview items={[
+        {label:'Ngày / ca',value:`${date} · ${formatShift(shift)}`},
+        {label:'Quầy',value:report?.branch?.name??ctx?.branches.find(b=>b.id===branchId)?.name??'Chưa chọn'},
+        {label:'Dòng sản phẩm',value:lines.length},
+        {label:'Tổng tiền hàng (VND)',value:gross.toString()},
+        {label:'Giảm giá (VND)',value:discounts},
+        {label:'Đã thu trừ hoàn (VND)',value:collected.toString(),emphasis:true},
+        {label:'Chênh lệch tạm tính (VND)',value:String(collected-expected)},
+      ]}/>
+      <FieldFormNotice tone="warning" message="Đối chiếu từng kênh, khoản hoàn và chi phí. Bản nháp không phải báo cáo đã duyệt."/>
+      <FieldFormToggle label="Tôi đã kiểm tra sản phẩm, số tiền và quầy" value={ready}
+        onChange={setReady} disabled={!valid||mutation.busy}/>
+    </FieldFormSection>
     <Action label={mutation.busy?'Đang lưu...':id?'LƯU BẢN CHỈNH SỬA':'LƯU BẢN NHÁP'}
       disabled={!ready||!valid||mutation.busy||(!!id&&!report?.allowedActions.canEdit)}
       onPress={save}/>

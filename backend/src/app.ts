@@ -36,6 +36,7 @@ import { createDeliveryReconciliationRouter } from './routes/delivery-reconcilia
 import { createStockWriteOffRouter } from './routes/stock-writeoff.routes';
 import { createStockAuditRouter } from './routes/stock-audit.routes';
 import { createOperationalBranchRouter } from './routes/operational-branches.routes';
+import { createEvidenceRouter } from './routes/evidence.routes';
 
 // Explicit paths keep documentation working after TypeScript sources are compiled.
 const apiDocs = {
@@ -80,7 +81,13 @@ export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = ()
     const origin = process.env.CORS_ORIGIN?.split(',').map(value => value.trim()).filter(Boolean) ?? '*';
     const io = new Server(server, { cors: { origin, methods: ['GET', 'POST'] } });
     app.use(cors({ origin }));
-    app.use(express.json());
+    // Evidence has a 3 MB JSON quota, while other API routes retain the normal small limit.
+    // The evidence body is parsed ONLY after requireAuth below.
+    const defaultJsonParser = express.json();
+    app.use((req, res, next) => {
+        if (req.path === '/api/evidence' || req.path.startsWith('/api/evidence/')) return next();
+        return defaultJsonParser(req, res, next);
+    });
     app.use(express.urlencoded({ extended: true }));
     app.get('/api-docs.json', (_req, res) => { res.json(docs); });
     app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(docs));
@@ -101,6 +108,9 @@ export function createApp(isDatabaseReady: () => boolean | Promise<boolean> = ()
         const guards = createAuthGuards(options.authPrisma, sessions);
 
         app.use('/api/auth', createAuthRouter(options.authPrisma, sessions));
+        app.use('/api/evidence', guards.requireAuth,
+            express.json({ limit: '3mb', type: 'application/json' }),
+            createEvidenceRouter(options.authPrisma));
 
         app.use(
             '/api/inventory',

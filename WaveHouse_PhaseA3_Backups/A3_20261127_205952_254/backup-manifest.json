@@ -1,0 +1,27 @@
+﻿[
+    {
+        "relative":  "src\\navigation\\BrandBottomNav.tsx",
+        "originalHash":  "01C1C81E2BDDD2AD0056DFA96B579371D35F675874B635569A9C91D1E60EFC0A",
+        "newHash":  "A5C87EC9408274EAA06FD6AC3B84EB0AA13986E8F9158DD36A8199BE230C3B8D"
+    },
+    {
+        "relative":  "src\\design\\doclap\\BrandNavigationBridge.tsx",
+        "originalHash":  "2C8A6B73519F8F8147ACF55D68C8D74C4327DC919DC45D004D7D79D33722A2AC",
+        "newHash":  "997B53179A437A17CDC9B9BE4E00A35E5862EAA598DE5D9B03B7558D6BC5C2B3"
+    },
+    {
+        "relative":  "src\\design\\doclap\\BrandBottomNav.tsx",
+        "originalHash":  "C1F36670BEDF4D450B8B82E03AD0F2D95CAB80BD0E912CCB8FA185038DB93142",
+        "newHash":  "DCEE24C831455AA385BFE0446415F778B0B81A3A0253F4FEF44435CC2BD73235"
+    },
+    {
+        "relative":  "src\\navigation\\doclap-tabs.ts",
+        "originalHash":  null,
+        "newHash":  "49E5D2B4293D5F76B9FC027EE5EA134D999050265541BC902EF25100A8908A64"
+    },
+    {
+        "relative":  "__tests__\\doclap-live-navigation.test.ts",
+        "originalHash":  null,
+        "newHash":  "8BEB786CD4EBECEAAD9E348681E1263C90484B984E6D826FA929738CB04BD7A4"
+    }
+]

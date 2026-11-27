@@ -1,6 +1,9 @@
 import { router } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { fieldApi } from './field.api.ts';
+import { EvidenceContextCard } from './EvidenceContextCard';
+import { FieldEmptyRecords, FieldListHeading } from './FieldRecordUI.tsx';
+import { FieldFormNotice, FieldFormQuantityInput, FieldFormReview, FieldFormSection, FieldFormToggle } from './FieldForm.ts';
 import { Action, Copy, FieldInput, Header, LoadControl, Page, Panel, StateNotice, Status, Warning,
   businessToday, parseQuantity, useFieldRead, useSafeMutation } from './field.ui.tsx';
 function decimalUnits(value:string):bigint|null {
@@ -12,19 +15,21 @@ export function ReceivingScreen() {
   const [date,setDate]=useState(businessToday());
   const [selected,setSelected]=useState(businessToday());
   const query=useFieldRead(useCallback((signal:AbortSignal)=>fieldApi.trips(selected,signal),[selected]));
+  const stops = query.value?.flatMap(trip => trip.stops.map(stop => ({trip, stop}))) ?? [];
   return <Page title="Nhận hàng tại quầy" lead="Dành cho nhân viên hoặc quản lý được phân quyền tại quầy. Người giao không tự xác nhận hàng.">
-    <Warning>Chỉ chọn ‘Đã đếm đủ’ sau khi kiểm đếm thực tế. Đối chiếu số lượng thực nhận, hàng hỏng và tên nguyên liệu trước khi bấm xác nhận. Khi mất mạng, không gửi lại cho đến khi kiểm tra trạng thái máy chủ.</Warning>
+    <FieldFormNotice tone="warning" title="Kiểm đếm trước khi xác nhận" message="Chỉ điền đủ sau khi kiểm đếm thực tế. Khi mất mạng, kiểm tra trạng thái máy chủ trước khi gửi lại."/>
     <Panel><FieldInput label="Ngày giao (YYYY-MM-DD)" value={date} onChangeText={setDate}/>
       <Action label="Xem chuyến trong ngày" onPress={()=>setSelected(date)} disabled={!/^\d{4}-\d{2}-\d{2}$/.test(date)}/>
     </Panel>
-    {query.value?.flatMap(trip=>trip.stops.map(stop=>({trip,stop}))).map(({trip,stop})=><Panel key={stop.id}>
+    <FieldListHeading title="Điểm giao cần đối chiếu" count={query.value ? stops.length : undefined} unit="điểm"/>
+    {stops.map(({trip,stop})=><Panel key={stop.id}>
       <Header>{stop.branch?.name??'Quầy'} · Chuyến {trip.code}</Header>
       <Status>{stop.status==='RECEIVED'?'Đã nhận hàng':stop.status==='DISPATCHED'?'Chờ đối chiếu':'Chưa xuất kho'}</Status>
       <Copy>{stop.items.length} mặt hàng · Điểm giao {stop.stopOrder}</Copy>
       <Action secondary label="Xem và đối chiếu từng SKU"
         onPress={()=>router.push({pathname:'/field/receive',params:{tripId:trip.id,stopId:stop.id}})}/>
     </Panel>)}
-    {!query.value?.length&&!query.loading?<Copy>Chưa có chuyến giao hợp lệ trong ngày này.</Copy>:null}
+    {query.value!==null&&stops.length===0?<FieldEmptyRecords title="Không có điểm giao" description="Chưa có điểm giao để đối chiếu trong ngày đã chọn."/>:null}
     <LoadControl loading={query.loading} error={query.error} onRefresh={()=>{void query.refresh();}}/>
   </Page>;
 }
@@ -63,21 +68,34 @@ export function ReceiveStopScreen({tripId,stopId}: {tripId:string;stopId:string}
         <Status>{stop.status==='RECEIVED'?'ĐÃ XÁC NHẬN':stop.status}</Status>
         <Copy>Điểm giao {stop.stopOrder} · {lines.length} nguyên liệu</Copy>
       </Panel>
-      {lines.map(({item,quantity,valid:validLine})=><Panel key={item.ingredientId}>
-        <Header>{item.ingredient?.name??'Nguyên liệu'}</Header>
-        <Copy>Mã: {item.ingredient?.code??'—'} · Dự kiến: {String(item.plannedQuantity)} {item.ingredient?.unit??''}</Copy>
-        <Action secondary label="✓ Đã đếm đủ như dự kiến" onPress={()=>{setChecked(false);setQuantities(q=>({...q,[item.ingredientId]:{received:String(item.plannedQuantity),damaged:'0'}}));}}/>
-        <FieldInput label={`Thực nhận (${item.ingredient?.unit??''})`} value={quantity?.received??''} keyboardType="decimal-pad"
+      <EvidenceContextCard type="stop" id={stop.id} kind="receiving" label="Điểm nhận hàng"/>
+      {lines.map(({item,quantity,valid:validLine})=><FieldFormSection key={item.ingredientId}
+        title={item.ingredient?.name??'Nguyên liệu'}
+        description={`Mã ${item.ingredient?.code??'—'} · Dự kiến ${String(item.plannedQuantity)} ${item.ingredient?.unit??''}`}>
+        <Action secondary label="Điền theo số đã đếm đủ như dự kiến" disabled={stop.status!=='DISPATCHED'||mutation.busy}
+          onPress={()=>{setChecked(false);setQuantities(q=>({...q,[item.ingredientId]:{received:String(item.plannedQuantity),damaged:'0'}}));}}/>
+        <FieldFormQuantityInput label="Thực nhận" unit={item.ingredient?.unit??''} required
+          value={quantity?.received??''} disabled={stop.status!=='DISPATCHED'||mutation.busy}
+          helperText="Số lượng thực đếm tại quầy, không tự điền từ tồn hệ thống."
+          error={quantity?.received&&!parseQuantity(quantity.received)?'Số không hợp lệ, tối đa 6 chữ số thập phân.':undefined}
           onChangeText={received=>{setChecked(false);setQuantities(q=>({...q,[item.ingredientId]:{received,damaged:q[item.ingredientId]?.damaged??'0'}}));}}/>
-        <FieldInput label={`Hỏng (${item.ingredient?.unit??''})`} value={quantity?.damaged??''} keyboardType="decimal-pad"
+        <FieldFormQuantityInput label="Số lượng hỏng" unit={item.ingredient?.unit??''} required
+          value={quantity?.damaged??''} disabled={stop.status!=='DISPATCHED'||mutation.busy}
+          error={quantity?.damaged&&!parseQuantity(quantity.damaged)?'Số không hợp lệ, tối đa 6 chữ số thập phân.':undefined}
           onChangeText={damaged=>{setChecked(false);setQuantities(q=>({...q,[item.ingredientId]:{received:q[item.ingredientId]?.received??'',damaged}}));}}/>
-        {!validLine?<Warning>Số lượng không hợp lệ hoặc vượt lượng dự kiến.</Warning>:null}
-      </Panel>)}
-      {stop.status==='DISPATCHED'?<Panel>
+        {!validLine?<FieldFormNotice tone="error" message="Kiểm tra số thực nhận + hỏng không vượt dự kiến; đơn vị cái phải là số nguyên."/>:null}
+      </FieldFormSection>)}
+      {stop.status==='DISPATCHED'?<FieldFormSection title="Rà soát và xác nhận" description="Phiếu chỉ được ghi nhận sau khi máy chủ xác nhận thành công.">
+        <FieldFormReview title="Tóm tắt kiểm đếm" items={[
+          {label:'Quầy nhận',value:stop.branch?.name??'—'},
+          {label:'Tổng SKU',value:lines.length},
+          {label:'SKU đã nhập hợp lệ',value:lines.filter(x=>x.valid).length,emphasis:true},
+          {label:'SKU có chênh lệch/hỏng',value:lines.filter(x=>x.difference).length},
+        ]}/>
         <FieldInput label="Ghi chú thiếu/hỏng (bắt buộc nếu có sai lệch)" value={note} onChangeText={value=>{setChecked(false);setNote(value);}} multiline/>
-        <Warning>Nhận thiếu/hỏng sẽ tạo hồ sơ sai lệch. Không tự cộng số lượng thiếu vào tồn kho.</Warning>
-        <Action secondary label={checked?'✓ Đã kiểm hàng thực tế':'Tôi đã trực tiếp kiểm tra hàng tại quầy'}
-          onPress={()=>setChecked(v=>!v)} disabled={!valid||mutation.busy}/>
+        <FieldFormNotice tone="warning" message="Nhận thiếu/hỏng sẽ tạo hồ sơ sai lệch. Không tự cộng số lượng thiếu vào tồn kho."/>
+        <FieldFormToggle label="Tôi đã trực tiếp kiểm tra hàng tại quầy" value={checked}
+          description="Chỉ xác nhận sau khi đối chiếu tất cả SKU thực tế." onChange={setChecked} disabled={!valid||mutation.busy}/>
         <Action disabled={!valid||!checked||mutation.busy} label={mutation.busy?'Đang ghi nhận...':'XÁC NHẬN NHẬN HÀNG'}
           onPress={()=>{void mutation.execute(()=>fieldApi.receive(stop.id,lines.map(x=>({
             ingredientId:x.item.ingredientId,receivedQuantity:x.quantity!.received,damagedQuantity:x.quantity!.damaged,
@@ -85,7 +103,7 @@ export function ReceiveStopScreen({tripId,stopId}: {tripId:string;stopId:string}
             setChecked(false);void read.refresh();
           });}}/>
         {mutation.error?<StateNotice error={mutation.error}/>:null}
-      </Panel>:<Warning>{stop.status==='RECEIVED'?'Điểm giao đã nhận; không được xác nhận lần hai.':'Chuyến chưa xuất kho; không được nhận trước.'}</Warning>}
+      </FieldFormSection>:<Warning>{stop.status==='RECEIVED'?'Điểm giao đã nhận; không được xác nhận lần hai.':'Chuyến chưa xuất kho; không được nhận trước.'}</Warning>}
     </>:!read.loading?<Copy>Điểm giao không còn khả dụng hoặc bạn không có quyền xem.</Copy>:null}
     <LoadControl loading={read.loading} error={read.error} onRefresh={()=>{void read.refresh();}}/>
   </Page>;

@@ -1,0 +1,22 @@
+﻿[
+    {
+        "Relative":  "src\\design\\doclap\\BrandDashboard.tsx",
+        "Original":  "792150913A9D8E5547371AE538AC96A02DA4A2E4206639A950BF76F1206BE1E2",
+        "Next":  "183888E2228B9DE2B172F769C10468E76C79484D27440054C80263E346A886F6"
+    },
+    {
+        "Relative":  "src\\field\\FieldHome.tsx",
+        "Original":  "0971BBC605CBF0F2B9B3053285347699BC454C1162FBB644AE8FDF4E5356304F",
+        "Next":  "C1296EAA9A54331E16D7D183B65545356CD6C5354D4B7C8CE3FC7F05148CAB8E"
+    },
+    {
+        "Relative":  "src\\field\\home-model.ts",
+        "Original":  null,
+        "Next":  "425D75BAF147C42EB89E0678BF9B43B443F3CA228D97F66E78616BDFDE3DEF3F"
+    },
+    {
+        "Relative":  "__tests__\\doclap-live-home.test.ts",
+        "Original":  null,
+        "Next":  "6E9AD21AB9BD53526DB10380D71DDA047FCE7925FDB81CB4B76A491518D572CA"
+    }
+]

@@ -2,7 +2,9 @@ import { useCallback, useState, useSyncExternalStore } from 'react';
 import { getAuthSnapshot, subscribeAuth } from '../auth/session.ts';
 import { fieldApi } from './field.api.ts';
 import type { WorkShift } from './field.types.ts';
-import { Action, Copy, FieldInput, Header, LoadControl, Page, Panel, Selection, StateNotice,
+import { FieldFormChoice, FieldFormNotice, FieldFormReview, FieldFormSection, FieldFormToggle } from './FieldForm.ts';
+import { FieldEmptyRecords, FieldListHeading } from './FieldRecordUI.tsx';
+import { Action, Copy, FieldInput, Header, LoadControl, Page, Panel, StateNotice,
   Status, Warning, businessToday, formatShift, shifts, useFieldRead, useSafeMutation } from './field.ui.tsx';
 const validDay=(value:string)=>/^\d{4}-\d{2}-\d{2}$/.test(value)&&!Number.isNaN(Date.parse(`${value}T00:00:00Z`))
   &&new Date(`${value}T00:00:00Z`).toISOString().slice(0,10)===value;
@@ -34,27 +36,34 @@ export function ScheduleScreen() {
       <FieldInput label="Ngày (YYYY-MM-DD)" value={date} onChangeText={setDate} placeholder="2026-11-26"/>
       <Action label="Xem ngày đã chọn" disabled={!validDay(date)} onPress={()=>setSelectedDay(date)}/>
     </Panel>
-    <Header>Phân công ngày {selectedDay}</Header>
-    {query.value?.assignments.length ? query.value.assignments.map(a=><Panel key={a.id}>
+    <FieldListHeading title={`Phân công ngày ${selectedDay}`} count={query.value?.assignments.length} unit="ca"/>
+    {query.value?.assignments.map(a=><Panel key={a.id}>
       <Header>{a.branch?.name??'Quầy'}</Header>
       <Copy>{formatShift(a.shift)} · {a.status==='SCHEDULED'?'Đang phân công':'Đã hủy'}</Copy>
       {user?.role!=='STAFF'?<Copy small>Nhân viên: {a.user?.displayName??'—'}</Copy>:null}
-    </Panel>):<Copy>Chưa có ca trong ngày này hoặc chưa tải được dữ liệu.</Copy>}
+    </Panel>)}
+    {query.value!==null&&query.value.assignments.length===0?<FieldEmptyRecords title="Chưa có lịch phân công" description="Không có ca được phân công trong ngày và phạm vi đã chọn."/>:null}
     <LoadControl loading={query.loading} error={query.error} onRefresh={()=>{void query.refresh();}}/>
     {isSales?<>
       <Header>Đăng ký thời gian rảnh</Header>
-      <Panel>
-        <Copy>Chọn đúng ngày và ca. Nếu ca đã được phân công, không thể đánh dấu không rảnh mà bỏ qua quản lý.</Copy>
-        <Selection options={shifts} value={shift} onChange={setShift}/>
-        <Selection options={[{code:'YES',label:'Tôi rảnh'},{code:'NO',label:'Tôi bận'}] as const}
-          value={available?'YES':'NO'} onChange={v=>setAvailable(v==='YES')}/>
+      <FieldFormSection title="Đăng ký lịch rảnh" description="Lựa chọn dưới đây chưa được lưu cho đến khi máy chủ xác nhận.">
+        <FieldFormNotice tone="warning" message="Nếu đã được phân công ca, hãy liên hệ quản lý trước khi đổi trạng thái rảnh/bận."/>
+        <FieldFormChoice label="Ca muốn cập nhật" value={shift} onChange={v=>setShift(v as WorkShift)}
+          options={shifts.map(s=>({value:s.code,label:s.label}))}/>
+        <FieldFormToggle label="Tôi rảnh trong ca này" description={available?'Đang chọn: Rảnh':'Đang chọn: Bận'}
+          value={available} onChange={setAvailable} disabled={mutation.busy}/>
         {query.value?.availability.filter(a=>a.shift===shift).map(a=><Status key={a.id}>
-          Đã lưu trên máy chủ: {a.available?'Rảnh':'Bận'}
+          Máy chủ đã lưu: {a.available?'Rảnh':'Bận'}
         </Status>)}
+        <FieldFormReview title="Thông tin sẽ lưu" items={[
+          {label:'Ngày',value:selectedDay},
+          {label:'Ca',value:formatShift(shift)},
+          {label:'Lựa chọn',value:available?'Rảnh':'Bận',emphasis:true},
+        ]}/>
         <Action label={mutation.busy?'Đang ghi nhận...':'Lưu thời gian rảnh'} disabled={mutation.busy}
           onPress={()=>{void mutation.execute(()=>fieldApi.setAvailability(selectedDay,shift,available),()=>{void query.refresh();});}}/>
         {mutation.error?<StateNotice error={mutation.error}/>:null}
-      </Panel>
+      </FieldFormSection>
     </>:<Warning>Phân công ca mới/đổi ca cần đối chiếu nhân sự và lịch rảnh. Màn hình này hiện ưu tiên tra cứu; không thay đổi ca hàng loạt ngoài hiện trường.</Warning>}
     <Copy small>Chỉ những lịch do máy chủ xác nhận mới có hiệu lực. Đừng coi trạng thái trên điện thoại là bằng chứng hoàn tất khi mạng yếu.</Copy>
   </Page>;
