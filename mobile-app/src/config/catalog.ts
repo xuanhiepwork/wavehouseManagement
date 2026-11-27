@@ -1,21 +1,21 @@
 import { CatalogApiError } from '../api/catalog.errors.ts';
 
-/** Pure normalization is separate from Expo's statically inlined environment access. */
+/** HTTPS for hosted backends; HTTP exclusively for developer loopback (ADB reverse / emulator).
+ * Never ship login credentials over a publicly reachable HTTP address.
+ */
 export function normalizeCatalogBaseUrl(value: unknown): string {
   try {
     if (typeof value !== 'string' || value !== value.trim() || !/^https?:\/\//i.test(value)) throw new Error();
     const url = new URL(value);
-    if (!['http:', 'https:'].includes(url.protocol)
-      || !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+    const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    if (!['http:', 'https:'].includes(url.protocol) || (url.protocol === 'http:' && !local)
       || url.username || url.password || url.search || url.hash
       || !['/', '/api', '/api/'].includes(url.pathname)) throw new Error();
     return `${url.origin}/api`;
-  } catch {
-    throw new CatalogApiError('CONFIGURATION');
-  }
+  } catch { throw new CatalogApiError('CONFIGURATION'); }
 }
 
-/** No default host, network request, or environment access runs merely by importing this module. */
+/** No implicit host; Expo statically embeds this public, NON-SECRET config value. */
 export function getCatalogBaseUrl(explicit?: string): string {
   return normalizeCatalogBaseUrl(explicit ?? process.env.EXPO_PUBLIC_API_BASE_URL);
 }

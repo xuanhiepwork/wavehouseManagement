@@ -1,3 +1,4 @@
+import { clearAuthSessionIfTokenMatches, currentAccessToken } from '../auth/session.ts';
 import { getCatalogBaseUrl } from '../config/catalog.ts';
 import { CatalogApiError, httpError } from './catalog.errors.ts';
 import type { DataEnvelope, Ingredient, IngredientQuery, PageEnvelope, Product, ProductQuery, Recipe, RecipeQuery, UUID } from './catalog.types.ts';
@@ -12,6 +13,8 @@ export interface CatalogClientOptions {
   readonly baseUrl?: string;
   readonly timeoutMs?: number;
   readonly fetch?: typeof globalThis.fetch;
+  /** Optional injection for callers; by default, use the in-memory Mobile session. */
+  readonly getAccessToken?: () => string | null;
 }
 export interface CatalogReadOptions { readonly signal?: AbortSignal }
 type Resource = 'ingredients' | 'products' | 'recipes';
@@ -82,12 +85,15 @@ export function createCatalogClient(options: CatalogClientOptions = {}) {
   const base = getCatalogBaseUrl(options.baseUrl);
   const timeoutMs = options.timeoutMs ?? 10_000;
   const fetcher = options.fetch ?? globalThis.fetch;
+  const getToken = options.getAccessToken ?? currentAccessToken;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647 || typeof fetcher !== 'function') {
     throw new CatalogApiError('CONFIGURATION');
   }
 
   async function request<T>(path: string, validate: Guard<T>, signal?: AbortSignal): Promise<T> {
     if (signal?.aborted) throw new CatalogApiError('CANCELLED');
+    const accessToken = getToken();
+    if (accessToken !== null && !/^[A-Za-z0-9_-]{43}$/.test(accessToken)) throw new CatalogApiError('CONFIGURATION');
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let cancel: (() => void) | undefined;
@@ -97,10 +103,11 @@ export function createCatalogClient(options: CatalogClientOptions = {}) {
       timer = setTimeout(() => { reject(new CatalogApiError('TIMEOUT')); controller.abort(); }, timeoutMs);
     });
     const url = `${base}${path}`;
+    const headers = accessToken ? { Accept: 'application/json', Authorization: `Bearer ${accessToken}` } : { Accept: 'application/json' };
     const work = async () => {
       let response: Response;
       try {
-        response = await fetcher(url, { method: 'GET', headers: { Accept: 'application/json' }, signal: controller.signal });
+        response = await fetcher(url, { method: 'GET', headers, signal: controller.signal });
       } catch {
         throw new CatalogApiError('NETWORK');
       }
@@ -114,7 +121,10 @@ export function createCatalogClient(options: CatalogClientOptions = {}) {
       } catch {
         throw new CatalogApiError('MALFORMED_RESPONSE');
       }
-      if (!ok) throw httpError(status);
+      if (!ok) {
+        if (status === 401 && accessToken) clearAuthSessionIfTokenMatches(accessToken);
+        throw httpError(status);
+      }
       let value: unknown;
       try {
         if (!validResponseUrl(response, url) || !/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '')) {
