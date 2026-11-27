@@ -23,11 +23,65 @@ const modelTarget = { trip: 'TRIP', stop: 'STOP', count: 'COUNT' } as const;
 const modelKind = { delivery: 'DELIVERY', receiving: 'RECEIVING', inventory: 'INVENTORY', damage: 'DAMAGE' } as const;
 const mimeTypes = ['image/jpeg', 'image/png', 'image/webp'] as const;
 
-type UploadInput = { kind: EvidenceKind; note: string | null; mimeType: typeof mimeTypes[number]; photoBytes: Buffer; sha256: string };
+type DeviceCapture = {
+    deviceCapturedAt: Date;
+    locationReadAt: Date;
+    gpsLatitude: string;
+    gpsLongitude: string;
+    gpsAccuracyMeters: string | null;
+    locationAddress: string | null;
+};
+type UploadInput = { kind: EvidenceKind; note: string | null; mimeType: typeof mimeTypes[number];
+    photoBytes: Buffer; sha256: string; capture: DeviceCapture | null };
 const metadataSelect = {
     id: true, targetType: true, targetId: true, kind: true, note: true, mimeType: true,
     byteSize: true, sha256: true, createdById: true, createdAt: true,
+    deviceCapturedAt: true, locationReadAt: true, gpsLatitude: true, gpsLongitude: true,
+    gpsAccuracyMeters: true, locationAddress: true,
 } as const;
+
+// Metadata is provided by the device, not authenticated GPS or a trusted clock.
+function parseDeviceCapture(value: unknown): DeviceCapture | null {
+    if (value === undefined || value === null) return null; // Legacy/gallery photos remain supported.
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new EvidenceError('Du lieu thoi gian/GPS khong hop le.', 400);
+    }
+    const data = value as Record<string, unknown>;
+    const allowed = ['capturedAt', 'locationReadAt', 'latitude', 'longitude', 'accuracyMeters', 'address'];
+    if (Object.keys(data).some(key => !allowed.includes(key))) {
+        throw new EvidenceError('Truong GPS khong duoc ho tro.', 400);
+    }
+    const iso = (v: unknown): Date | null => {
+        if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(v)) return null;
+        const parsed = new Date(v);
+        return Number.isFinite(parsed.getTime()) && parsed.toISOString() === v ? parsed : null;
+    };
+    const capturedAt = iso(data.capturedAt);
+    const locationReadAt = iso(data.locationReadAt);
+    const latitude = data.latitude;
+    const longitude = data.longitude;
+    const accuracy = data.accuracyMeters;
+    const address = data.address;
+    const now = Date.now();
+    if (!capturedAt || !locationReadAt || capturedAt.getTime() > now + 5 * 60_000 ||
+        now - capturedAt.getTime() > 7 * 24 * 60 * 60_000 ||
+        locationReadAt.getTime() > capturedAt.getTime() + 5_000 ||
+        capturedAt.getTime() - locationReadAt.getTime() > 30_000 ||
+        typeof latitude !== 'number' || !Number.isFinite(latitude) || Math.abs(latitude) > 90 ||
+        typeof longitude !== 'number' || !Number.isFinite(longitude) || Math.abs(longitude) > 180 ||
+        (accuracy !== null && (typeof accuracy !== 'number' || !Number.isFinite(accuracy) || accuracy < 0 || accuracy > 100000)) ||
+        (address !== null && (typeof address !== 'string' || address.trim().length > 500))) {
+        throw new EvidenceError('Thoi gian hoac toa do GPS khong hop le.', 400);
+    }
+    return {
+        deviceCapturedAt: capturedAt,
+        locationReadAt,
+        gpsLatitude: latitude.toFixed(6),
+        gpsLongitude: longitude.toFixed(6),
+        gpsAccuracyMeters: typeof accuracy === 'number' ? accuracy.toFixed(2) : null,
+        locationAddress: typeof address === 'string' ? address.trim() || null : null,
+    };
+}
 
 export function parseTarget(type: unknown, targetId: unknown): { type: EvidenceTarget; targetId: string } {
     if ((type !== 'trip' && type !== 'stop' && type !== 'count') ||
@@ -47,7 +101,7 @@ function detectMime(bytes: Buffer): typeof mimeTypes[number] | null {
 export function parseUpload(input: unknown, targetType: EvidenceTarget): UploadInput {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new EvidenceError('Du lieu anh khong hop le.', 400);
     const body = input as Record<string, unknown>;
-    if (Object.keys(body).some(key => !['kind', 'note', 'mimeType', 'dataBase64'].includes(key))) {
+    if (Object.keys(body).some(key => !['kind', 'note', 'mimeType', 'dataBase64', 'capture'].includes(key))) {
         throw new EvidenceError('Truong khong duoc ho tro.', 400);
     }
     const kind = body.kind;
@@ -78,6 +132,7 @@ export function parseUpload(input: unknown, targetType: EvidenceTarget): UploadI
         mimeType: mime as typeof mimeTypes[number],
         photoBytes: bytes,
         sha256: createHash('sha256').update(bytes).digest('hex'),
+        capture: parseDeviceCapture(body.capture),
     };
 }
 
@@ -167,6 +222,7 @@ export async function createEvidence(db: PrismaClient, actor: EvidenceActor, typ
             targetType, targetId: id, kind: modelKind[input.kind], note: input.note,
             mimeType: input.mimeType, byteSize: input.photoBytes.length,
             sha256: input.sha256, photoBytes: input.photoBytes, createdById: actor.id,
+            ...(input.capture ?? {}),
         }, select: metadataSelect });
         return { data, created: true };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, maxWait: 5000, timeout: 20000 });
@@ -178,9 +234,46 @@ export async function getEvidenceImage(db: PrismaClient, actor: EvidenceActor,
     await authorize(db, actor, type, targetId, false);
     const row = await db.evidenceAttachment.findFirst({ where: {
         id: imageId.toLowerCase(), targetType: modelTarget[type], targetId,
-    }, select: { mimeType: true, photoBytes: true } });
+    }, select: { mimeType: true, photoBytes: true, sha256: true } });
     if (!row) throw new EvidenceError('Khong tim thay anh.', 404);
-    return { mimeType: row.mimeType, bytes: Buffer.from(row.photoBytes) };
+    const bytes = Buffer.from(row.photoBytes);
+    if (createHash('sha256').update(bytes).digest('hex') !== row.sha256) {
+        throw new EvidenceError('Anh luu tru khong vuot qua kiem tra toan ven.', 409);
+    }
+    return { mimeType: row.mimeType, bytes };
+}
+
+/** Checks stored-byte integrity. Does not authenticate physical GPS or device clock. */
+export async function verifyEvidence(db: PrismaClient, actor: EvidenceActor,
+    type: EvidenceTarget, targetId: string, attachmentId: string) {
+    if (!UUID_RE.test(attachmentId)) throw new EvidenceError('ID anh khong hop le.', 400);
+    await authorize(db, actor, type, targetId, false);
+    const row = await db.evidenceAttachment.findFirst({
+        where: { id: attachmentId.toLowerCase(), targetType: modelTarget[type], targetId },
+        select: {
+            id: true, sha256: true, photoBytes: true, createdAt: true,
+            deviceCapturedAt: true, locationReadAt: true, gpsLatitude: true,
+            gpsLongitude: true, gpsAccuracyMeters: true, locationAddress: true,
+        },
+    });
+    if (!row) throw new EvidenceError('Khong tim thay anh.', 404);
+    const computed = createHash('sha256').update(Buffer.from(row.photoBytes)).digest('hex');
+    return {
+        attachmentId: row.id,
+        integrity: computed === row.sha256 ? 'MATCH' as const : 'MISMATCH' as const,
+        storedSha256: row.sha256,
+        serverReceivedAt: row.createdAt,
+        deviceReported: row.deviceCapturedAt ? {
+            capturedAt: row.deviceCapturedAt,
+            locationReadAt: row.locationReadAt,
+            latitude: row.gpsLatitude?.toString() ?? null,
+            longitude: row.gpsLongitude?.toString() ?? null,
+            accuracyMeters: row.gpsAccuracyMeters?.toString() ?? null,
+            address: row.locationAddress,
+        } : null,
+        assurance: 'STORED_BYTES_ONLY' as const,
+        // Never return a public image URL or describe GPS as independently verified.
+    };
 }
 export function evidenceFailure(error: unknown): { status: number; message: string } {
     if (error instanceof EvidenceError) return { status: error.status, message: error.message };

@@ -1177,6 +1177,13 @@ model EvidenceAttachment {
   mimeType    String              @map("mime_type") @db.VarChar(32)
   byteSize    Int                 @map("byte_size")
   sha256      String              @db.VarChar(64)
+  // User device-reported facts; these are NOT independent location/time attestations.
+  deviceCapturedAt  DateTime?       @map("device_captured_at") @db.Timestamptz(6)
+  locationReadAt    DateTime?       @map("location_read_at") @db.Timestamptz(6)
+  gpsLatitude       Decimal?        @map("gps_latitude") @db.Decimal(9, 6)
+  gpsLongitude      Decimal?        @map("gps_longitude") @db.Decimal(9, 6)
+  gpsAccuracyMeters Decimal?        @map("gps_accuracy_meters") @db.Decimal(9, 2)
+  locationAddress   String?         @map("location_address") @db.VarChar(500)
   photoBytes  Bytes               @map("photo_bytes") @db.ByteA
   createdById String              @map("created_by_id") @db.Uuid
   createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)

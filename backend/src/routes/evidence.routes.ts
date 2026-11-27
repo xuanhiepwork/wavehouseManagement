@@ -1,7 +1,7 @@
 import { Router, type Response } from 'express';
 import type { PrismaClient } from '../generated/prisma/client';
 import { createEvidence, evidenceFailure, getEvidenceImage, listEvidence, parseTarget, parseUpload,
-    type EvidenceActor } from '../services/evidence.service';
+    verifyEvidence, type EvidenceActor } from '../services/evidence.service';
 
 export function createEvidenceRouter(db: PrismaClient) {
     const router = Router();
@@ -27,6 +27,13 @@ export function createEvidenceRouter(db: PrismaClient) {
             const input = parseUpload(req.body, target.type);
             const result = await createEvidence(db, actor(res), target.type, target.targetId, input);
             res.status(result.created ? 201 : 200).json({ data: result.data, replayed: !result.created });
+        } catch (err) { failure(res, err); }
+    });
+    router.get('/:targetType/:targetId/:attachmentId/verify', async (req, res) => {
+        try {
+            const target = parseTarget(req.params.targetType, req.params.targetId);
+            const result = await verifyEvidence(db, actor(res), target.type, target.targetId, req.params.attachmentId);
+            res.json({ data: result });
         } catch (err) { failure(res, err); }
     });
     router.get('/:targetType/:targetId/:attachmentId/image', async (req, res) => {

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Alert, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
-import { listSavedEvidence, savedImageSource, uploadEvidence, type UploadedEvidence } from './evidence.api';
+import { listSavedEvidence, savedImageSource, uploadEvidence, verifySavedEvidence,
+  type UploadedEvidence, type EvidenceVerification } from './evidence.api';
 import * as ImagePicker from 'expo-image-picker';
 import { BrandIcon } from '../design/BrandIcon.tsx';
 import { BrandBadge } from '../design/doclap/BrandBadge';
@@ -46,9 +47,12 @@ export function CameraHub({targetType,targetId,initialKind}: {
   const [savedBusy,setSavedBusy] = useState(false);
   const [saveBusy,setSaveBusy] = useState(false);
   const [savedMessage,setSavedMessage] = useState('');
+  const [verifications,setVerifications] = useState<Record<string,EvidenceVerification>>({});
+  const [checkingId,setCheckingId] = useState<string|null>(null);
   useEffect(() => {
     let active = true;
     setSaved([]);
+    setVerifications({});
     if (target.type !== 'general') {
       setSavedBusy(true);
       void listSavedEvidence(target).then(rows => { if (active) setSaved(rows); })
@@ -72,6 +76,16 @@ export function CameraHub({targetType,targetId,initialKind}: {
       setError(cause instanceof Error ? cause.message : 'Khong tai duoc anh len Backend.');
     } finally { setSaveBusy(false); }
   };
+  const verifyOne = async (id:string) => {
+    if (checkingId || target.type === 'general') return;
+    setCheckingId(id);setError('');
+    try {
+      const verification = await verifySavedEvidence(target,id);
+      setVerifications(current=>({...current,[id]:verification}));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Khong kiem tra duoc anh.');
+    } finally {setCheckingId(null);}
+  };
   const inProgress = useRef(false);
   const selected = drafts.find(draft=>draft.id===selectedId)??drafts[0]??null;
   const kinds = target.type==='trip' ? CATEGORIES.filter(item=>item.key==='delivery')
@@ -80,38 +94,31 @@ export function CameraHub({targetType,targetId,initialKind}: {
     : CATEGORIES;
   const kind = kinds.some(item=>item.key===category) ? category : kinds[0].key;
 
-  const capture = async (source:'camera'|'library') => {
+  // Library imports remain explicitly separate: they do not prove original time or location.
+  const importFromLibrary = async () => {
     if (inProgress.current) return;
     if (drafts.length>=MAX_PER_TARGET || snapshot.items.length>=MAX_TOTAL_DRAFTS) {
       setError('Đã đạt giới hạn ảnh nháp. Hãy xóa ảnh không cần thiết trước.');return;
     }
     inProgress.current = true;
-    setBusy(true);
-    setError('');
+    setBusy(true);setError('');
     try {
-      if (source==='camera') {
-        const permission = await ImagePicker.requestCameraPermissionsAsync();
-        if (!permission.granted) {
-          setError('Chưa có quyền sử dụng Camera. Hãy cấp quyền trong cài đặt thiết bị.');return;
-        }
-      }
-      const options:ImagePicker.ImagePickerOptions = {
+      const result=await ImagePicker.launchImageLibraryAsync({
         mediaTypes:['images'],allowsEditing:false,exif:false,base64:true,
         quality:0.8,allowsMultipleSelection:false,
-      };
-      const result = source==='camera' ? await ImagePicker.launchCameraAsync(options)
-        : await ImagePicker.launchImageLibraryAsync(options);
+      });
       if (result.canceled || !result.assets?.[0]?.uri) return;
-      const asset = result.assets[0];
-      const photo = addEvidence({uri:asset.uri,kind,target,base64:asset.base64??undefined,
+      const asset=result.assets[0];
+      const photo=addEvidence({uri:asset.uri,kind,target,base64:asset.base64??undefined,
         mimeType:asset.mimeType??undefined});
       setSelectedId(photo.id);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Không thể mở ảnh trên thiết bị.');
-    } finally {
-      inProgress.current = false;
-      setBusy(false);
-    }
+    } catch {
+      setError('Không thể chọn ảnh từ thư viện.');
+    } finally {inProgress.current=false;setBusy(false);}
+  };
+  const openTimestampCamera = () => {
+    if (busy || drafts.length>=MAX_PER_TARGET || snapshot.items.length>=MAX_TOTAL_DRAFTS) return;
+    router.push({pathname:'/camera-timestamp',params:{targetType:target.type,targetId:target.id,kind}});
   };
   const clear = () => Alert.alert('Xóa ảnh nháp của mục này?',
     'Ảnh và ghi chú sẽ được gỡ khỏi phiên làm việc. Ảnh gốc trong thư viện không bị xóa.',[
@@ -125,7 +132,7 @@ export function CameraHub({targetType,targetId,initialKind}: {
     footer="Ảnh nháp chưa gửi chỉ tồn tại trong phiên đăng nhập. Ảnh được Backend xác nhận mới được tính là minh chứng đã lưu.">
     <BrandCard variant="subtle" style={styles.notice}>
       <BrandBadge label="ẢNH NHÁP CHƯA GỬI" tone="warning" />
-      <Text style={styles.noticeText}>Ảnh nháp chưa được lưu trên máy chủ. Chỉ ảnh có xác nhận lưu từ Backend mới được xem là minh chứng của phiếu. Camera không thay đổi trạng thái nghiệp vụ.</Text>
+      <Text style={styles.noticeText}>Ảnh chụp mới được đóng dấu ngày/giờ, vị trí GPS và logo trực tiếp lên JPEG. Thông tin lấy từ thiết bị, chưa phải xác minh độc lập. Chỉ ảnh có xác nhận Backend mới là minh chứng đã lưu.</Text>
     </BrandCard>
     <BrandCard style={styles.context}>
       <Text style={styles.contextLabel}>Ngữ cảnh ảnh</Text>
@@ -142,20 +149,20 @@ export function CameraHub({targetType,targetId,initialKind}: {
       <Text style={[styles.categoryText,kind===item.key&&styles.categoryTextActive]}>{item.label}</Text>
     </Pressable>)}</View>
     <View style={styles.actions}>
-      <View style={styles.slot}><BrandButton title="Chụp ảnh" variant="accent"
+      <View style={styles.slot}><BrandButton title="Chụp có giờ · GPS · logo" variant="accent"
         icon={<BrandIcon name="camera" color="#FFFFFF" size={22}/>}
         disabled={busy||drafts.length>=MAX_PER_TARGET||snapshot.items.length>=MAX_TOTAL_DRAFTS}
-        loading={busy} onPress={()=>{void capture('camera');}} fullWidth/></View>
-      <View style={styles.slot}><BrandButton title="Chọn từ máy" variant="outline"
+        loading={busy} onPress={openTimestampCamera} fullWidth/></View>
+      <View style={styles.slot}><BrandButton title="Ảnh từ thư viện" variant="outline"
         disabled={busy||drafts.length>=MAX_PER_TARGET||snapshot.items.length>=MAX_TOTAL_DRAFTS}
-        onPress={()=>{void capture('library');}} fullWidth/></View>
+        onPress={()=>{void importFromLibrary();}} fullWidth/></View>
     </View>
     {error?<Text accessibilityRole="alert" style={styles.error}>{error}</Text>:null}
     <BrandSectionTitle subtitle="Chỉ hiển thị các ảnh nháp thuộc mục đang chọn">Ảnh và ghi chú</BrandSectionTitle>
     {!selected?<BrandCard style={styles.empty}>
       <BrandIcon name="camera" color={palette.burgundy} size={32}/>
       <Text style={styles.emptyTitle}>Chưa có ảnh nháp</Text>
-      <Text style={styles.emptyText}>Chụp ảnh hoặc chọn ảnh có sẵn để chuẩn bị minh chứng.</Text>
+      <Text style={styles.emptyText}>Chụp ảnh có đóng dấu thời gian, GPS và logo hoặc nhập ảnh có sẵn. Ảnh nhập từ thư viện không được xác thực thời gian và vị trí gốc.</Text>
     </BrandCard>:<BrandCard style={styles.previewCard}>
       <Image source={{uri:selected.uri}} style={styles.preview} resizeMode="contain" accessibilityLabel="Ảnh đang xem trước"/>
       <BrandBadge label={kindLabel(selected.kind)} tone="neutral" />
@@ -189,8 +196,24 @@ export function CameraHub({targetType,targetId,initialKind}: {
           {source ? <Image source={source} style={styles.savedThumb} resizeMode="cover"/> : null}
           <View style={{flex:1}}>
             <BrandBadge tone="success" label="ĐÃ LƯU MÁY CHỦ"/>
-            <Text style={styles.contextSub}>{item.kind} · {new Date(item.createdAt).toLocaleString('vi-VN')}</Text>
+            <Text style={styles.contextSub}>{item.kind} · Nhận lúc {new Date(item.createdAt).toLocaleString('vi-VN')}</Text>
+            {item.deviceCapturedAt ? <Text style={styles.contextSub}>
+              Máy báo chụp lúc {new Date(item.deviceCapturedAt).toLocaleString('vi-VN')}
+            </Text> : <Text style={styles.contextSub}>Không có metadata thời điểm chụp.</Text>}
             {item.note ? <Text style={styles.noticeText}>{item.note}</Text> : null}
+            <BrandButton title={checkingId===item.id?'Đang kiểm tra...':'Kiểm tra SHA-256 đã lưu'}
+              variant="outline" disabled={Boolean(checkingId)} onPress={()=>{void verifyOne(item.id);}} fullWidth/>
+            {verifications[item.id] ? <View style={{gap:4}}>
+              <Text style={[styles.contextSub,{color:verifications[item.id].integrity==='MATCH'?palette.burgundy:palette.danger}]}> 
+                {verifications[item.id].integrity==='MATCH' ? 'Ảnh lưu trên máy chủ khớp SHA-256.' : 'CẢNH BÁO: ảnh lưu trên máy chủ không khớp SHA-256.'}
+              </Text>
+              <Text style={styles.contextSub} selectable>SHA-256: {verifications[item.id].storedSha256}</Text>
+              {verifications[item.id].deviceReported ? <>
+                <Text style={styles.contextSub}>GPS thiết bị báo: {verifications[item.id].deviceReported?.latitude ?? '?'} / {verifications[item.id].deviceReported?.longitude ?? '?'}</Text>
+                <Text style={styles.contextSub}>Địa chỉ thiết bị báo: {verifications[item.id].deviceReported?.address || 'Không xác định địa chỉ'}</Text>
+              </> : <Text style={styles.contextSub}>Ảnh cũ/ảnh thư viện: không có metadata GPS từ Camera.</Text>}
+              <Text style={styles.contextSub}>Thời gian/GPS do thiết bị báo; chưa được xác thực độc lập.</Text>
+            </View> : null}
           </View>
         </BrandCard>;
       })}

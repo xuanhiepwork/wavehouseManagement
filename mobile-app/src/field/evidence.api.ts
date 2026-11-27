@@ -16,6 +16,28 @@ export interface UploadedEvidence {
   byteSize: number;
   createdAt: string;
   createdById: string;
+  sha256?: string;
+  deviceCapturedAt?: string | null;
+  locationReadAt?: string | null;
+  gpsLatitude?: string | null;
+  gpsLongitude?: string | null;
+  gpsAccuracyMeters?: string | null;
+  locationAddress?: string | null;
+}
+export interface EvidenceVerification {
+  attachmentId: string;
+  integrity: 'MATCH' | 'MISMATCH';
+  storedSha256: string;
+  serverReceivedAt: string;
+  deviceReported: null | {
+    capturedAt: string;
+    locationReadAt: string | null;
+    latitude: string | null;
+    longitude: string | null;
+    accuracyMeters: string | null;
+    address: string | null;
+  };
+  assurance: 'STORED_BYTES_ONLY';
 }
 
 function context(target: EvidenceTarget): string {
@@ -98,9 +120,25 @@ export async function uploadEvidence(target: EvidenceTarget, draft: EvidenceDraf
   if (draft.base64.length > 2_800_000) throw new Error('Anh lon hon 2 MB. Vui long chon anh nho hon.');
   const payload: unknown = await jsonRequest(path, 'POST', {
     kind: draft.kind, note: draft.note, mimeType: draft.mimeType, dataBase64: draft.base64,
+    ...(draft.captureFacts ? {capture: draft.captureFacts} : {}),
   });
   if (!isRecord(payload)) throw new Error('Backend khong xac nhan luu anh.');
   return parseItem(payload.data, target);
+}
+/** Private authenticated check of bytes stored by the server; not a proof of capture location. */
+export async function verifySavedEvidence(target: EvidenceTarget, attachmentId: string): Promise<EvidenceVerification> {
+  if (!uuidPattern.test(attachmentId)) throw new Error('Ma anh khong hop le.');
+  const response: unknown = await jsonRequest(`${context(target)}/${attachmentId}/verify`, 'GET');
+  const value = isRecord(response) ? response.data : null;
+  if (!isRecord(value) || value.attachmentId !== attachmentId ||
+      !['MATCH','MISMATCH'].includes(String(value.integrity)) ||
+      value.assurance !== 'STORED_BYTES_ONLY' ||
+      typeof value.storedSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.storedSha256) ||
+      typeof value.serverReceivedAt !== 'string' ||
+      (value.deviceReported !== null && !isRecord(value.deviceReported))) {
+    throw new Error('Phan hoi xac minh khong hop le.');
+  }
+  return value as unknown as EvidenceVerification;
 }
 export function savedImageSource(target: EvidenceTarget, image: UploadedEvidence):
   {uri:string;headers:{Authorization:string}} | null {

@@ -1,5 +1,6 @@
 /** Session-scoped, on-device evidence previews. Not uploaded or linked on the server. */
 import { getAuthSnapshot, subscribeAuth } from '../auth/session.ts';
+import type { CaptureFacts } from './timestamp/stamp.model';
 
 export type EvidenceKind = 'delivery' | 'receiving' | 'inventory' | 'damage';
 export type EvidenceTargetType = 'trip' | 'stop' | 'count' | 'general';
@@ -13,6 +14,7 @@ export interface EvidenceDraft {
   readonly note: string;
   readonly createdAt: string;
   readonly target: EvidenceTarget;
+  readonly captureFacts?: CaptureFacts; // Device reported, not independently attested.
 }
 interface EvidenceSnapshot { readonly version: number; readonly items: readonly EvidenceDraft[] }
 export const MAX_PER_TARGET = 5;
@@ -50,7 +52,7 @@ export function parseEvidenceTarget(type: unknown, id: unknown): EvidenceTarget 
 export function evidenceFor(target: EvidenceTarget, source = snapshot): readonly EvidenceDraft[] {
   return source.items.filter(item => item.target.type === target.type && item.target.id === target.id);
 }
-export function addEvidence(input: {uri:string; kind:EvidenceKind; note?:string; target:EvidenceTarget; base64?:string; mimeType?:string}): EvidenceDraft {
+export function addEvidence(input: {uri:string; kind:EvidenceKind; note?:string; target:EvidenceTarget; base64?:string; mimeType?:string; captureFacts?:CaptureFacts}): EvidenceDraft {
   resetOnSessionChange();
   if (!getAuthSnapshot().user) throw new Error('Phiên đăng nhập không còn hợp lệ.');
   if (!/^(file|content):\/\//.test(input.uri)) throw new Error('Ảnh không có đường dẫn thiết bị hợp lệ.');
@@ -65,6 +67,7 @@ export function addEvidence(input: {uri:string; kind:EvidenceKind; note?:string;
     note: (input.note??'').slice(0,500),
     createdAt: new Date().toISOString(),
     target: {...input.target},
+    captureFacts: input.captureFacts ? Object.freeze({...input.captureFacts}) : undefined,
   });
   publish([...snapshot.items, draft]);
   return draft;
